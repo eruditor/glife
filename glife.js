@@ -1,8 +1,9 @@
 // GET PARAMS ////////////////////////////////////////////////////////////////
 
 const urlParams = new URLSearchParams(window.location.search);
-paused = urlParams.get('paused') ? 1 : 0;
 debug = urlParams.get('debug') ? 1 : 0;
+paused = urlParams.get('paused') ? 1 : 0;
+pausestat = urlParams.get('pausestat') ? 1 : 0;
 maxfps = intval(urlParams.get('maxfps'));
 FW = 1200;  if(urlParams.get('FW')>0) FW = intval(urlParams.get('FW'));
 FH = 600;   if(urlParams.get('FH')>0) FH = intval(urlParams.get('FH'));
@@ -17,21 +18,19 @@ const selfParams = new URLSearchParams(myScript.src);
 
 // GLSL SHADERS ////////////////////////////////////////////////////////////////
 
-var VertexShaderSource = `
+var LifeVertexShaderSource = `
   #version 300 es
   precision mediump float;
   
   uniform vec2 u_resolution;  // Field width and height
   
-  in vec2 a_position;  // this attribute will receive data from a buffer of vertice coords
-  in vec2 a_texcoord;  // this attribute will receive data from a buffer of texture coords
+  in vec2 a_position;  // input data from vertice coords buffer
+  in vec2 a_texcoord;  // input data from texture coords buffer
   
   out vec2 v_texcoord;  // texture coord to pass to fragment shader (linearly interpolated)
   
   void main() {
-    vec2 zeroToOne = a_position / u_resolution;  // convert the position from pixels to 0.0 to 1.0
-    vec2 clipSpace = zeroToOne * 2.0 - 1.0;      // convert from 0->1 to -1->+1 (clip space)
-    //vec2 flipY = clipSpace * vec2(1, -1);        // flip Y axes direction
+    vec2 clipSpace = (a_position / u_resolution) * 2.0 - 1.0;  // convert the position from pixels to clip space: [FW, FH] -> [-1, 1]
     
     gl_Position = vec4(clipSpace, 0, 1);  // gl_Position is a special variable a vertex shader is responsible for setting
     
@@ -40,7 +39,7 @@ var VertexShaderSource = `
 `;
 
 function Bit4Gene(v, i) {//i += 10;
-  //return (v << i) >>> 0;
+  //return (v << i) >>> 0;  // for 1-bit genes
   if(v==0) return 0;
   var numerator = round(15*v);
   var ret = 0;
@@ -50,6 +49,17 @@ function Bit4Gene(v, i) {//i += 10;
   }
   return ret;
 }
+
+var fs_Bit4Gene = `
+  uint Bit4Gene(uint v, uint i) {  // v=0..15 
+    //return (v << i);
+    if(v==0u) return 0u;
+    return (((v >> 0) & 1u) << (i +  0u))
+         + (((v >> 1) & 1u) << (i +  8u))
+         + (((v >> 2) & 1u) << (i + 16u))
+         + (((v >> 3) & 1u) << (i + 24u));
+  }
+`;
 
 function Gene4Bit(x, i) {//i += 10;
   //return (x >>> i) & 1;
@@ -61,19 +71,31 @@ function Gene4Bit(x, i) {//i += 10;
   return numerator / 15.;
 }
 
-function Color4Bits(bits) {
+var fs_Gene4Bit = `
+  uint Gene4Bit(uint x, uint i) {
+    //return (x >> i) & 1u;  // % 2u
+    if(x==0u) return 0u;
+    return (((x >> (i +  0u)) & 1u) << 0)
+         + (((x >> (i +  8u)) & 1u) << 1)
+         + (((x >> (i + 16u)) & 1u) << 2)
+         + (((x >> (i + 24u)) & 1u) << 3);
+  }
   /*
-  var red = bits.iborn;
-  var green = bits.isurv;
-  var blue = 255 - red - green;  if(blue<0) blue = 0;
-  return {'r':red, 'g':blue, 'b':green};  // swapping blue and green as in ShowFragment
+  // for some reason this code doesn't work and insanely lags
+  uint numerator = 0u;
+  for(uint n=3u; n>=0u; n--) {
+    numerator += ((x >> (i + 8u*n)) & 1u) << n;
+  }
+  return numerator;  // 0..15
   */
+`;
+
+function Color4Bits(bits) {
   var born=[], surv=[];
   for(var i=0; i<8; i++) {
     born[i] = Gene4Bit(bits.iborn, i);
     surv[i] = Gene4Bit(bits.isurv, i);
   }
-  console.log(born);
   var ret = {'r':0, 'g':0, 'b':0};
   ret.r = (born[2] + born[3] + born[7]) / 2. + (surv[0] + surv[3]) / 3.;
   ret.g = (born[4] + born[6]) / 2. + (surv[1] + surv[5] + surv[7]) / 3.;
@@ -87,55 +109,56 @@ function Color4Bits(bits) {
   return ret;
 }
 
+var fs_Color4Cell = `
+  vec4 Color4Cell(uvec4 cell) {
+    float born[8], surv[8];
+    for(uint i=0u; i<8u; i++) {
+      born[i] = float(Gene4Bit(cell.r, i)) / 15.;
+      surv[i] = float(Gene4Bit(cell.g, i)) / 15.;
+    }
+    vec4 ret;
+    ret.r = (born[2] + born[3] + born[7]) / 2. + (surv[0] + surv[3]) / 3.;
+    ret.g = (born[4] + born[6]) / 2. + (surv[1] + surv[5] + surv[7]) / 3.;
+    ret.b = (born[5] + born[5]) / 2. + (surv[2] + surv[4] + surv[6]) / 3.;
+    float l = sqrt(ret.r*ret.r + ret.g*ret.g + ret.b*ret.b);
+    if(l>0.) {
+      ret.r /= l;
+      ret.g /= l;
+      ret.b /= l;
+    }
+    ret.a = 1.;
+    return ret;
+  }
+`;
+
 var CalcFragmentShaderSource = `
   #version 300 es
   precision mediump float;
   precision highp int;
   
   uniform vec2 u_resolution;  // Field width and height
-  uniform highp usampler2D u_texture;  // Field texture, UInt32
+  uniform highp usampler2D u_fieldtexture;  // Field texture, UInt32
   
   in vec2 v_texcoord;  // the texCoords passed in from the vertex shader
   
   out uvec4 color;
   
-  vec2 dxdy;  // pixel size in clip space
+  vec2 pixelSize;  // pixel size in clip space
   
   uvec4 GetCell(int x, int y) {
-    return texture(u_texture, fract(v_texcoord + vec2(x, y) * dxdy));  // fract makes it torus
+    return texture(u_fieldtexture, fract(v_texcoord + vec2(x, y) * pixelSize));  // fract makes it torus
   }
   
-  uint Bit4Gene(uint v, uint i) {  // v=0..15 
-    //return (v << i);
-    if(v==0u) return 0u;
-    return (((v >> 0) & 1u) << (i +  0u))
-         + (((v >> 1) & 1u) << (i +  8u))
-         + (((v >> 2) & 1u) << (i + 16u))
-         + (((v >> 3) & 1u) << (i + 24u));
-  }
+  ` + fs_Bit4Gene + `
   
-  uint Gene4Bit(uint x, uint i) {
-    //return (x >> i) & 1u;  // % 2u
-    if(x==0u) return 0u;
-    return (((x >> (i +  0u)) & 1u) << 0)
-         + (((x >> (i +  8u)) & 1u) << 1)
-         + (((x >> (i + 16u)) & 1u) << 2)
-         + (((x >> (i + 24u)) & 1u) << 3);
-  }
-  /* // for some reason this code doesn't work and insanely lags
-  uint numerator = 0u;
-  for(uint n=3u; n>=0u; n--) {
-    numerator += ((x >> (i + 8u*n)) & 1u) << n;
-  }
-  return numerator;  // 0..15
-  */
+  ` + fs_Gene4Bit + `
   
   uint Round05(uint x, uint y) {
-    return uint(floor(float(x)/float(y) + 0.499));  // rounding 0.5 to 0!
+    return uint(floor(float(x)/float(y) + 0.499));  // rounding 0.5 to 0! to make half-blood species less surviving
   }
   
   void main() {
-    dxdy = vec2(1.0, 1.0) / u_resolution;
+    pixelSize = vec2(1.0, 1.0) / u_resolution;
     
     uvec4 cells[9];
     cells[0] = GetCell(-1, -1);
@@ -196,227 +219,21 @@ var ShowFragmentShaderSource = `
   precision mediump float;
   precision highp int;
   
-  uniform highp usampler2D u_texture;  // Field texture
+  uniform highp usampler2D u_fieldtexture;  // Field texture, UInt32
   
   in vec2 v_texcoord;  // the texCoords passed in from the vertex shader
   
   out vec4 color;
   
-  uint Gene4Bit(uint x, uint i) {
-    //return (x >> i) & 1u;  // % 2u
-    if(x==0u) return 0u;
-    return (((x >> (i +  0u)) & 1u) << 0)
-         + (((x >> (i +  8u)) & 1u) << 1)
-         + (((x >> (i + 16u)) & 1u) << 2)
-         + (((x >> (i + 24u)) & 1u) << 3);
-  }
+  ` + fs_Gene4Bit + `
   
-  vec4 Color4Cell(uvec4 cell) {
-    float born[8], surv[8];
-    for(uint i=0u; i<8u; i++) {
-      born[i] = float(Gene4Bit(cell.r, i)) / 15.;
-      surv[i] = float(Gene4Bit(cell.g, i)) / 15.;
-    }
-    vec4 ret;
-    ret.r = (born[2] + born[3] + born[7]) / 2. + (surv[0] + surv[3]) / 3.;
-    ret.g = (born[4] + born[6]) / 2. + (surv[1] + surv[5] + surv[7]) / 3.;
-    ret.b = (born[5] + born[5]) / 2. + (surv[2] + surv[4] + surv[6]) / 3.;
-    float l = sqrt(ret.r*ret.r + ret.g*ret.g + ret.b*ret.b);
-    if(l>0.) {
-      ret.r /= l;
-      ret.g /= l;
-      ret.b /= l;
-    }
-    ret.a = 1.;
-    return ret;
-  }
+  ` + fs_Color4Cell + `
   
   void main() {
-    uvec4 cell = texture(u_texture, v_texcoord);
+    uvec4 cell = texture(u_fieldtexture, v_texcoord);
     color = Color4Cell(cell);
-    //color = color.rbga;  // swapping blue and green, to make Conway's rules green, not blue (looks better)
   }
 `;
-
-// INIT SHADERS ////////////////////////////////////////////////////////////////
-
-canvas = document.querySelector("#cnv");
-
-gl = canvas.getContext("webgl2");  //, {premultipliedAlpha:false}  //"experimental-webgl"
-if(!gl) alert('Enable WebGL2 in your browser');
-
-function createShader(gl, type, source) {
-  var shader = gl.createShader(type);
-  gl.shaderSource(shader, source);
-  gl.compileShader(shader);
-  var success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
-  if(success) {
-    return shader;
-  }
-  else {
-    console.log(gl.getShaderInfoLog(shader));
-    gl.deleteShader(shader);
-  }
-}
-
-var VertexShader       = createShader(gl, gl.VERTEX_SHADER,   VertexShaderSource.trim());  // same for both Calc and Show
-var CalcFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, CalcFragmentShaderSource.trim());
-var ShowFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, ShowFragmentShaderSource.trim());
-
-function createProgram(gl, vertexShader, fragmentShader) {
-  var program = gl.createProgram();
-  gl.attachShader(program, vertexShader);
-  gl.attachShader(program, fragmentShader);
-  gl.linkProgram(program);
-  var success = gl.getProgramParameter(program, gl.LINK_STATUS);
-  if(success) {
-    return program;
-  }
-  else {
-    console.log(gl.getProgramInfoLog(program));
-    gl.deleteProgram(program);
-  }
-}
-
-var CalcProgram = createProgram(gl, VertexShader, CalcFragmentShader);
-var ShowProgram = createProgram(gl, VertexShader, ShowFragmentShader);
-
-// LINKING DATA ////////////////////////////////////////////////////////////////
-
-gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);  // 1 byte alignment (not default 4) for WebGL
-
-// we use same "program" object to store variable locations
-CalcProgram.positionLocation   = gl.getAttribLocation(CalcProgram, "a_position");
-CalcProgram.texcoordLocation   = gl.getAttribLocation(CalcProgram, "a_texcoord");
-CalcProgram.resolutionLocation = gl.getUniformLocation(CalcProgram, "u_resolution");
-CalcProgram.textureLocation    = gl.getUniformLocation(CalcProgram, "u_texture");
-
-ShowProgram.positionLocation   = gl.getAttribLocation(ShowProgram, "a_position");
-ShowProgram.texcoordLocation   = gl.getAttribLocation(ShowProgram, "a_texcoord");
-ShowProgram.resolutionLocation = gl.getUniformLocation(ShowProgram, "u_resolution");
-ShowProgram.textureLocation    = gl.getUniformLocation(ShowProgram, "u_texture");
-
-// CANVAS SIZE ////////////////////////////////////////////////////////////////
-
-if(document.body.clientWidth < document.body.clientHeight) [FW, FH] = [FH, FW];
-var zoomx = Math.floor(0.9 * document.body.clientWidth  / FW);  if(zoomx<1) zoomx = 1;
-var zoomy = Math.floor(0.9 * document.body.clientHeight / FH);  if(zoomy<1) zoomy = 1;
-zoom = Math.min(zoomx, zoomy);
-FWzoom = FW * zoom;
-
-canvas.width  = zoom * FW;  canvas.style.width  = canvas.width  + 'px';
-canvas.height = zoom * FH;  canvas.style.height = canvas.height + 'px';
-
-document.getElementById('pausecont').style.width = canvas.width + 'px';
-
-function resizeCanvasToDisplaySize(canvas) {
-  // Lookup the size the browser is displaying the canvas.
-  var displayWidth  = canvas.clientWidth;
-  var displayHeight = canvas.clientHeight;
- 
-  // Check if the canvas is not the same size.
-  if (canvas.width  != displayWidth ||
-      canvas.height != displayHeight) {
- 
-    // Make the canvas the same size
-    canvas.width  = displayWidth;
-    canvas.height = displayHeight;
-  }
-}
-
-// FPS STATS ////////////////////////////////////////////////////////////////
-
-statsUi = new Stats();
-statsUi.domElement.style.position = 'fixed';
-statsUi.domElement.style.left = '0px';
-statsUi.domElement.style.top = '0px';
-document.body.appendChild(statsUi.domElement);
-
-// VERTICES ////////////////////////////////////////////////////////////////
-
-var positionBuffer = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-gl.enableVertexAttribArray(CalcProgram.positionLocation);
-
-gl.vertexAttribPointer( // Tell the attribute how to get data out of positionBuffer (ARRAY_BUFFER)
-  CalcProgram.positionLocation,
-  2,  // size (2 components per iteration)
-  gl.FLOAT,  // type (the data is 32bit floats)
-  false,  // normalize
-  0,  // stride (0 = move forward size * sizeof(type) each iteration to get the next position)
-  0,  // offset (start at the beginning of the buffer)
-);
-
-gl.bufferData(gl.ARRAY_BUFFER,
-  new Float32Array([
-     0,  0,
-     0, FH,
-    FW, FH,
-    FW,  0,
-  ]),
-  gl.STATIC_DRAW
-);
-
-// TEXTURES ////////////////////////////////////////////////////////////////
-
-// we need to store 32bit (not default 8bit) in each color channel - Float32 or Int32
-
-//var float_texture_ext = gl.getExtension('OES_texture_float');        if(!float_texture_ext) alert('OES_texture_float not supported');
-//var float_colorbu_ext = gl.getExtension('WEBGL_color_buffer_float'); if(!float_colorbu_ext) alert('WEBGL_color_buffer_float not supported');
-//var float_colorbu_ext = gl.getExtension('EXT_color_buffer_float');   if(!float_colorbu_ext) alert('EXT_color_buffer_float not supported');
-
-gldata_InternalFormat = gl.RGBA32UI;  //RGBA32F  //RGBA
-gldata_Format = gl.RGBA_INTEGER;      //RGBA     //RGBA
-gldata_Type = gl.UNSIGNED_INT;        //FLOAT    //UNSIGNED_BYTE
-
-var texcoordBuffer = gl.createBuffer();
-gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
-gl.enableVertexAttribArray(CalcProgram.texcoordLocation);
-gl.vertexAttribPointer(CalcProgram.texcoordLocation, 2, gl.FLOAT, false, 0, 0);
-gl.bufferData(gl.ARRAY_BUFFER,
-  new Float32Array([
-    0, 0,
-    0, 1,
-    1, 1,
-    1, 0,
-  ]),
-  gl.STATIC_DRAW
-);
-
-function CreateTexture(width, height) {
-  var texture = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  
-  gl.texImage2D(gl.TEXTURE_2D, 0, gldata_InternalFormat, width, height, 0, gldata_Format, gldata_Type, null);
-  
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-  return texture;
-}
-
-function SetTexture(texture_num, texture, width, height, data) {
-  gl.activeTexture(gl.TEXTURE0 + texture_num);
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gldata_InternalFormat, width, height, 0, gldata_Format, gldata_Type, data);
-}
-
-function CreateFramebuffer(texture) {
-  var framebuffer = gl.createFramebuffer();
-  gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-  return framebuffer;
-}
-
-Textures = new Array(2);
-Textures[0] = CreateTexture(FW, FH);
-Textures[1] = CreateTexture(FW, FH);
-
-Framebuffers = new Array(2);
-Framebuffers[0] = CreateFramebuffer(Textures[0]);
-Framebuffers[1] = CreateFramebuffer(Textures[1]);
 
 // RULES (GENES) ////////////////////////////////////////////////////////////////
 
@@ -424,10 +241,13 @@ Framebuffers[1] = CreateFramebuffer(Textures[1]);
 // each Strand consists of 9 Genes
 // each Gene is a bit (0/1) or float - probability [0., 1.]
 // we omit gene#0 (it rarely exists) to pack strands to 8*bit or 8*Float4 (1*Float32) numbers
+// it is possible to extend this logic:
+// 1. Skip bits 0 and 1 for born to keep bit 0 for surv (encoding-decoding logic will become more complicated)
+// 2. Use blue and alpha channels to add one more bit to every gene - Float5 precision instead of Float4
 
 Rules = [
   '37:23',  // DryLife
-  //'3:023',  // DotLife
+  '3:023',  // DotLife
   '357:238',  // Pseudo Life
   '36:125',  // 2x2
   '38:23',  // Pedestrian Life
@@ -438,7 +258,7 @@ Rules = [
   '3:238',  // EightLife
   
   //'357:1358',  // Amoeba
-  //'35678:5678',  // Diamoeba
+  '35678:5678',  // Diamoeba
   //'34:456',  // Bacteria
   //'3:45678',  // Coral
   //'34578:456',  // Gems Minor
@@ -476,6 +296,7 @@ function Genom4Bits(ibs) {
 
 // 0 a b c d e f g h i  j  k  l  m  n  1
 // 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+
 function Idx4Strand(strand) {
   var idx = '', d;
   for(var n=0; n<9; n++) {
@@ -508,7 +329,7 @@ function Genom4Idx(idx) {
   return {'born':Strand4Idx(idx.substring(0,9)), 'surv':Strand4Idx(idx.substring(10,19))};
 }
 
-// MATH ////////////////////////////////////////////////////////////////
+// COMMON MATH ////////////////////////////////////////////////////////////////
 
 function intval(x) { return parseInt(x, 10); }
 function floor(x) { return Math.floor(x); }
@@ -580,16 +401,195 @@ function InitialFill() {
 
 InitialFill();  if(debug) console.log(F);
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// INIT SHADERS ////////////////////////////////////////////////////////////////
+
+canvas = document.querySelector("#cnv");
+
+gl = canvas.getContext("webgl2");  //, {premultipliedAlpha:false}  //"experimental-webgl"
+if(!gl) alert('Enable WebGL2 in your browser');
+
+function createShader(gl, type, source) {
+  var shader = gl.createShader(type);
+  gl.shaderSource(shader, source);
+  gl.compileShader(shader);
+  var success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+  if(success) {
+    return shader;
+  }
+  else {
+    console.log(gl.getShaderInfoLog(shader));
+    gl.deleteShader(shader);
+  }
+}
+
+var LifeVertexShader   = createShader(gl, gl.VERTEX_SHADER,   LifeVertexShaderSource.trim());  // same for both Calc and Show
+var CalcFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, CalcFragmentShaderSource.trim());
+var ShowFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, ShowFragmentShaderSource.trim());
+
+function createProgram(gl, vertexShader, fragmentShader) {
+  var program = gl.createProgram();
+  gl.attachShader(program, vertexShader);
+  gl.attachShader(program, fragmentShader);
+  gl.linkProgram(program);
+  var success = gl.getProgramParameter(program, gl.LINK_STATUS);
+  if(success) {
+    return program;
+  }
+  else {
+    console.log(gl.getProgramInfoLog(program));
+    gl.deleteProgram(program);
+  }
+}
+
+var CalcProgram = createProgram(gl, LifeVertexShader, CalcFragmentShader);
+var ShowProgram = createProgram(gl, LifeVertexShader, ShowFragmentShader);
+
+// LINKING DATA ////////////////////////////////////////////////////////////////
+
+gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);  // 1 byte alignment (not default 4) for WebGL
+
+// we use same "program" object to store variable locations
+CalcProgram.location = {};
+CalcProgram.location.a_position   = gl.getAttribLocation( CalcProgram, "a_position");
+CalcProgram.location.a_texcoord   = gl.getAttribLocation( CalcProgram, "a_texcoord");
+CalcProgram.location.u_resolution = gl.getUniformLocation(CalcProgram, "u_resolution");
+CalcProgram.location.u_fieldtexture    = gl.getUniformLocation(CalcProgram, "u_fieldtexture");
+ShowProgram.location = {};
+ShowProgram.location.a_position   = gl.getAttribLocation( ShowProgram, "a_position");
+ShowProgram.location.a_texcoord   = gl.getAttribLocation( ShowProgram, "a_texcoord");
+ShowProgram.location.u_resolution = gl.getUniformLocation(ShowProgram, "u_resolution");
+ShowProgram.location.u_fieldtexture    = gl.getUniformLocation(ShowProgram, "u_fieldtexture");
+
+// CANVAS SIZE ////////////////////////////////////////////////////////////////
+
+if(document.body.clientWidth < document.body.clientHeight) [FW, FH] = [FH, FW];
+var zoomx = Math.floor(0.9 * document.body.clientWidth  / FW);  if(zoomx<1) zoomx = 1;
+var zoomy = Math.floor(0.9 * document.body.clientHeight / FH);  if(zoomy<1) zoomy = 1;
+zoom = Math.min(zoomx, zoomy);
+FWzoom = FW * zoom;
+
+canvas.width  = zoom * FW;  canvas.style.width  = canvas.width  + 'px';
+canvas.height = zoom * FH;  canvas.style.height = canvas.height + 'px';
+
+document.getElementById('pausecont').style.width = canvas.width + 'px';
+
+function resizeCanvasToDisplaySize(canvas) {
+  // Lookup the size the browser is displaying the canvas.
+  var displayWidth  = canvas.clientWidth;
+  var displayHeight = canvas.clientHeight;
+ 
+  // Check if the canvas is not the same size.
+  if (canvas.width  != displayWidth ||
+      canvas.height != displayHeight) {
+ 
+    // Make the canvas the same size
+    canvas.width  = displayWidth;
+    canvas.height = displayHeight;
+  }
+}
+
+// FPS STATS ////////////////////////////////////////////////////////////////
+
+statsUi = new Stats();
+statsUi.domElement.style.position = 'fixed';
+statsUi.domElement.style.left = '0px';
+statsUi.domElement.style.top = '0px';
+document.body.appendChild(statsUi.domElement);
+
+// VERTICES ////////////////////////////////////////////////////////////////
+
+var positionBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+gl.enableVertexAttribArray(CalcProgram.location.a_position);
+
+gl.vertexAttribPointer( // Tell the attribute how to get data out of positionBuffer (ARRAY_BUFFER)
+  CalcProgram.location.a_position,
+  2,  // size (2 components per iteration)
+  gl.FLOAT,  // type (the data is 32bit floats)
+  false,  // normalize
+  0,  // stride (0 = move forward size * sizeof(type) each iteration to get the next position)
+  0,  // offset (start at the beginning of the buffer)
+);
+
+gl.bufferData(gl.ARRAY_BUFFER,
+  new Float32Array([
+     0,  0,
+     0, FH,
+    FW, FH,
+    FW,  0,
+  ]),
+  gl.STATIC_DRAW
+);
+
+// TEXTURES ////////////////////////////////////////////////////////////////
+
+// we need to store 32bit (not default 8bit) in each color channel - Float32 or Int32
+
+gldata_InternalFormat = gl.RGBA32UI;  //RGBA32F  //RGBA
+gldata_Format = gl.RGBA_INTEGER;      //RGBA     //RGBA
+gldata_Type = gl.UNSIGNED_INT;        //FLOAT    //UNSIGNED_BYTE
+
+var texcoordBuffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, texcoordBuffer);
+gl.enableVertexAttribArray(CalcProgram.location.a_texcoord);
+gl.vertexAttribPointer(CalcProgram.location.a_texcoord, 2, gl.FLOAT, false, 0, 0);
+gl.bufferData(gl.ARRAY_BUFFER,
+  new Float32Array([
+    0, 0,
+    0, 1,
+    1, 1,
+    1, 0,
+  ]),
+  gl.STATIC_DRAW
+);
+
+function CreateTexture(width, height) {
+  var texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  
+  gl.texImage2D(gl.TEXTURE_2D, 0, gldata_InternalFormat, width, height, 0, gldata_Format, gldata_Type, null);
+  
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  return texture;
+}
+
+function SetTexture(texture_num, texture, width, height, data) {
+  gl.activeTexture(gl.TEXTURE0 + texture_num);
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gldata_InternalFormat, width, height, 0, gldata_Format, gldata_Type, data);
+}
+
+function CreateFramebuffer(texture) {
+  var framebuffer = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+  return framebuffer;
+}
+
+Textures = new Array(2);
+Textures[0] = CreateTexture(FW, FH);
+Textures[1] = CreateTexture(FW, FH);
+
+Framebuffers = new Array(2);
+Framebuffers[0] = CreateFramebuffer(Textures[0]);
+Framebuffers[1] = CreateFramebuffer(Textures[1]);
+
 SetTexture(T0, Textures[T0], FW, FH, F);
 
 // RENDERING ////////////////////////////////////////////////////////////////
 
+var tracked = [];
+
 Show();  // draw initial state as first frame (useful for GET-paused mode)
-Read(true);
+//ReadStat(true);
 
 CalcWorld();
-
-setTimeout(Read, 1000);
 
 function Calc() {
   gl.useProgram(CalcProgram);
@@ -597,11 +597,11 @@ function Calc() {
   gl.bindFramebuffer(gl.FRAMEBUFFER, Framebuffers[T1]);
   
   gl.viewport(0, 0, FW, FH);
-  gl.uniform2f(CalcProgram.resolutionLocation, FW, FH);
+  gl.uniform2f(CalcProgram.location.u_resolution, FW, FH);
   
   gl.activeTexture(gl.TEXTURE0 + T0);
   gl.bindTexture(gl.TEXTURE_2D, Textures[T0]);
-  gl.uniform1i(CalcProgram.textureLocation, T0);
+  gl.uniform1i(CalcProgram.location.u_fieldtexture, T0);
   
   gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
 
@@ -620,17 +620,18 @@ function Show() {
   gl.clearColor(0, 0, 0, 1);
   gl.clear(gl.COLOR_BUFFER_BIT);
 
-  gl.uniform2f(ShowProgram.resolutionLocation, FW, FH);
+  gl.uniform2f(ShowProgram.location.u_resolution, FW, FH);
   
   gl.activeTexture(gl.TEXTURE0 + T0);
   gl.bindTexture(gl.TEXTURE_2D, Textures[T0]);
-  gl.uniform1i(ShowProgram.textureLocation, T0);
+  gl.uniform1i(ShowProgram.location.u_fieldtexture, T0);
   
   gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
 }
 
-function Read(force=false) {
-  if(paused && !force) return 0;
+
+function ReadStat(force=false) {
+  if((paused || pausestat) && !force) return 0;
   
   gl.bindFramebuffer(gl.FRAMEBUFFER, Framebuffers[T0]);
   
@@ -647,7 +648,6 @@ function Read(force=false) {
       if(!cell.a) continue;  // dead cell
       var bits = {'iborn': cell.r, 'isurv': cell.g};
       var idx = Idx4Genom(Genom4Bits(bits));
-
       if(!specstat[idx]) { specstat[idx] = 0;  gcount ++; }
       specstat[idx] ++;
       ttl ++;
@@ -656,7 +656,21 @@ function Read(force=false) {
   s1 += 'live cells = ' + ttl + '<br>';
   s1 += 'genotypes = ' + gcount + '<br>';
   
-  var tracked = specstat;  // tracking all for now
+  // tracking all species ever reached top-3 in their z-plane or filled 0.1% of field's area
+  var sorted = arsort_keys(specstat);
+  var l = sorted.length, lmt = round(0.001*FW*FH);
+  for(i=0; i<l; i++) {
+    idx = sorted[i];  if(!idx) break;  if(!specstat[idx]) break;
+    if(i<3 || specstat[idx]>lmt) {
+      tracked[idx] = specstat[idx];
+    }
+    else break;
+  }
+  
+  // updating all tracked values
+  for(idx in tracked) {
+    tracked[idx] = specstat[idx] ? specstat[idx] : 0;
+  }
   
   var trsorted = arsort_keys(tracked);
   
@@ -673,8 +687,8 @@ function Read(force=false) {
   
   document.getElementById('stxt1').innerHTML = s1;
   document.getElementById('stxt2').innerHTML = s2;
-
-  setTimeout(Read, 1000);
+  
+  setTimeout(ReadStat, 1000);
 }
 
 function CalcWorld() {

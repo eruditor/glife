@@ -6,7 +6,7 @@ $page->type = "page";
 
 $p = mysql_o("SELECT * FROM rr_pages WHERE typ='k' AND url='alife'");
 
-$ver = 203;
+$ver = 204;
 
 if(true) {
   $otitle = "GLife";
@@ -36,7 +36,10 @@ $page->z .= "
   </style>
 
   <canvas id='cnv'></canvas><br>
-  <div id='pausecont'><input type='button' autofocus onclick='if(paused){paused=0; this.value=`pause`; CalcWorld(); Read();} else {paused=1; this.value=`unpause`;}' value='pause' style='width:70px;'></div>
+  <div id='pausecont'>
+    <input type='button' value='pause stats' onclick='if(pausestat){pausestat=0; this.value=`pause stats`; ReadStat();} else {pausestat=1; this.value=`unpause stats`;}' style='width:100px; float:left;'>
+    <input type='button' value='pause' autofocus onclick='if(paused){paused=0; this.value=`pause`; CalcWorld(); ReadStat();} else {paused=1; this.value=`unpause`;}' style='width:100px;'>
+  </div>
   <div id='stxt1'></div>
   <div id='statcanvas'></div>
   <div id='stxt2'></div><br>
