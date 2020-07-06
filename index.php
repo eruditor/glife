@@ -6,7 +6,7 @@ $page->type = "page";
 
 $p = mysql_o("SELECT * FROM rr_pages WHERE typ='k' AND url='alife'");
 
-$ver = 204;
+$ver = 205;
 
 if(true) {
   $otitle = "GLife";
@@ -32,14 +32,14 @@ $page->z .= "
     #stxt1, #stxt2, #statcanvas {font:normal 11px/11px Lucida Console, Monaco, Monospace; margin-bottom:5px;}
     #stxt1, #stxt2 {overflow-x:scroll; white-space:nowrap;}
     #stxt1 {margin-bottom:10px;}
-    #pausecont {width:400px; text-align:right;}
+    #pausecont {width:400px; text-align:left;}
   </style>
 
   <canvas id='cnv'></canvas><br>
   <div id='pausecont'>
-    <input type='button' value='pause stats' onclick='if(pausestat){pausestat=0; this.value=`pause stats`; ReadStat();} else {pausestat=1; this.value=`unpause stats`;}' style='width:100px; float:left;'>
-    <input type='button' value='pause' autofocus onclick='if(paused){paused=0; this.value=`pause`; CalcWorld(); ReadStat();} else {paused=1; this.value=`unpause`;}' style='width:100px;'>
-  </div>
+    <input type='button' value='".($_GET['paused']?"unpause":"pause")."' autofocus onclick='if(paused){paused=0; this.value=`pause`; CalcWorld(); ReadStat();} else {paused=1; this.value=`unpause`;}' style='width:100px;'>
+    <input type='button' value='pause stats' onclick='if(pausestat){pausestat=0; this.value=`pause stats`; ReadStat();} else {pausestat=1; this.value=`unpause stats`;}' style='width:100px;'>
+  </div><br>
   <div id='stxt1'></div>
   <div id='statcanvas'></div>
   <div id='stxt2'></div><br>
@@ -52,7 +52,6 @@ $page->z .= "
 
 <div class=zpubd>$zpubd</div>
 
-<script src='vendor/stats.js'></script>
 <script src='glife.js?v=$ver&r=".rand(1,getrandmax())."'></script>
 
 ";
