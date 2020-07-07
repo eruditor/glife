@@ -6,7 +6,7 @@ $page->type = "page";
 
 $p = mysql_o("SELECT * FROM rr_pages WHERE typ='k' AND url='alife'");
 
-$ver = 205;
+$ver = 206;
 
 if(true) {
   $otitle = "GLife";
@@ -52,7 +52,7 @@ $page->z .= "
 
 <div class=zpubd>$zpubd</div>
 
-<script src='glife.js?v=$ver&r=".rand(1,getrandmax())."'></script>
+<script src='glife".($_GET['ver']=="205pre"?"_205pre":"").".js?v=$ver&r=".rand(1,getrandmax())."'></script>
 
 ";
   

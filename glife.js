@@ -5,9 +5,9 @@ debug = urlParams.get('debug') ? 1 : 0;
 paused = urlParams.get('paused') ? 1 : 0;
 pausestat = urlParams.get('pausestat') ? 1 : 0;
 maxfps = intval(urlParams.get('maxfps'));
-FW = 1200;  if(urlParams.get('FW')>0) FW = intval(urlParams.get('FW'));
-FH =  600;  if(urlParams.get('FH')>0) FH = intval(urlParams.get('FH'));
-FD =    4;  if(urlParams.get('FD')>0) FD = intval(urlParams.get('FD'));
+FW = 600;  if(urlParams.get('FW')>0) FW = intval(urlParams.get('FW'));
+FH = 350;  if(urlParams.get('FH')>0) FH = intval(urlParams.get('FH'));
+FD =   3;  if(urlParams.get('FD')>0) FD = intval(urlParams.get('FD'));
 if(debug) {
   paused = 1;  maxfps = 1;
   FW = 10;  FH = 5;
@@ -171,6 +171,8 @@ var CalcFragmentShaderSource = `
   }
   
   void main() {
+    #define diealpha 128u;
+    
     fieldSize = textureSize(u_fieldtexture, 0);
     
     uvec4 colors[`+FD+`];
@@ -204,15 +206,15 @@ var CalcFragmentShaderSource = `
       color = curcell;  // by default cell stays the same as in previous turn
       
       if(neibcount==0u) {  // no neibs -> always die (we don't even have genes encoded for B/S=0)
-        if(IsAlive(curcell)) color.a = 128u;  // die
+        if(IsAlive(curcell)) color.a = diealpha;  // die
       }
       else if(IsAlive(curcell)) {  // alive cell - will it survive?
         if(layer<`+(FD-1)+` && IsAlive(GetCell(0, 0, 1))) {
-          color.a = 128u;  // die, eaten by carnivore
+          color.a = diealpha;  // die, eaten by carnivore
         }
         else {
           uint survbit = Gene4Bit(curcell.g, neibcount - 1u);  // green channel = surv rule in bits
-          if(survbit<=7u) color.a = 128u;  // die
+          if(survbit<=7u) color.a = diealpha;  // die
           // else survive
         }
       }
@@ -222,14 +224,17 @@ var CalcFragmentShaderSource = `
         }
         else {
           uint bornbit = 0u;  // average among living neighbors of the bit needed to define if new cell will be born
-          for(uint n=0u; n<9u; n++) {
-            bornbit += Gene4Bit(cells[n].r, neibcount - 1u);  // red channel = born rule in bits
+          for(uint n=1u; n<9u; n++) {
+            if(IsAlive(cells[n])) {
+              bornbit += Gene4Bit(cells[n].r, neibcount - 1u);  // red channel = born rule in bits
+            }
           }
           bornbit = Round05(bornbit, neibcount);
           
           if(bornbit>7u) {  // born
             uvec4 neibbits[8];
             for(uint i=0u; i<8u; i++) {
+              neibbits[i] = uvec4(0);
               for(uint n=1u; n<9u; n++) {
                 if(IsAlive(cells[n])) {
                   neibbits[i].r += Gene4Bit(cells[n].r, i);
@@ -311,50 +316,55 @@ var ShowFragmentShaderSource = `
 // 1. Skip bits 0 and 1 for born to keep bit 0 for surv (encoding-decoding logic will become more complicated)
 // 2. Use blue and alpha channels to add one more bit to every gene - Float5 precision instead of Float4 (loosing color decay info in alpha-channel)
 
-Rules = [
-  [
-  '37:23',  // DryLife
-  '3:023',  // DotLife
-  '357:238',  // Pseudo Life
-  '36:125',  // 2x2
-  '38:23',  // Pedestrian Life
-  '3:23',  // Conway's Life
-  '368:238',  // LowDeath
-  '36:23',  // HighLife
-  '38:238',  // HoneyLife
-  '3:238',  // EightLife
-  
-  //'357:1358',  // Amoeba
-  //'35678:5678',  // Diamoeba
-  //'34:456',  // Bacteria
-  //'3:45678',  // Coral
-  //'34578:456',  // Gems Minor
-  //'36:235',  // Blinker Life
-  ],
-];
-Rules = [
-  ['37:23'],
-  ['3:023'],
-  ['36:125'],
-  ['38:23'],
-];
-Rules = [
-  [  // plants
-    '35678:5678',
-  ],
-  [  // herbivores
-    '347:235',
-    '',
-    '3568:235',
-  ],
-  [  // carnivores
-    //'12:123',
-    '',
-  ],
-  [
-    '',
-  ],
-];
+if(FD==1) {
+  Rules = [
+    [
+    '37:23',  // DryLife
+    '38:23',  // Pedestrian Life
+    '357:238',  // Pseudo Life
+    '36:125',  // 2x2
+    '3:23',  // Conway's Life
+    '368:238',  // LowDeath
+    '36:23',  // HighLife
+    '38:238',  // HoneyLife
+    '3:238',  // EightLife
+    
+    //'357:1358',  // Amoeba
+    //'35678:5678',  // Diamoeba
+    //'34:456',  // Bacteria
+    //'3:45678',  // Coral
+    //'34578:456',  // Gems Minor
+    //'36:235',  // Blinker Life
+    ],
+  ];
+  Rules = [
+    [
+    '357:238',
+    '36:125',
+    ],
+  ];
+}
+else {
+  Rules = [
+    [  // plants
+      '35678:5678',
+    ],
+    [  // herbivores
+      '347:235',
+      '',
+      '3568:2367',
+    ],
+    [  // carnivores
+      '',
+      '12:1',
+      '12:14',
+      '',
+    ],
+    [
+      '',
+    ],
+  ];
+}
 
 if(debug) Rules = [
   ['37:23', '36:125'],
@@ -469,15 +479,18 @@ function FlipTime() {
 
 function InitSetCell(x, y, z, r) {
   if(!Rules[z][r]) return;
-  var bitrules = Bits4Genom(Genom4Rule(Rules[z][r]));
+  var bitrules = Bits4Genom(Genom4Rule(Rules[z][r]));  //Bits4Genom(Genom4Idx('00010fhf0:0h1f0h00f'))
   SetCell(x, y, z, bitrules.iborn, bitrules.isurv, 0, 255);
 }
 
 function InitialFill() {
   if(debug) {
-    InitSetCell(1, 2, 0, 0);
-    InitSetCell(2, 2, 0, 0);
-    InitSetCell(3, 2, 0, 1);
+    if(1) {
+      InitSetCell(1, 2, 0, 0);
+      InitSetCell(2, 2, 0, 0);
+      InitSetCell(3, 2, 0, 1);
+    }
+    
     if(FD>2) {
       InitSetCell(8, 2, 2, 0);
       InitSetCell(7, 2, 2, 0);
@@ -724,6 +737,8 @@ function Show() {
 function ReadStat(force=false) {
   if((paused || pausestat) && !force) return 0;
   
+  var x, y, z, idx, zidx;
+  
   var s1 = '', s2 = '';
   
   s1 += 'r = ' + selfParams.get('r') + '<br>';
@@ -741,14 +756,15 @@ function ReadStat(force=false) {
     gl.readBuffer(gl.COLOR_ATTACHMENT0 + z);
     gl.readPixels(0, 0, FW, FH, gldata_Format, gldata_Type, F);  // reading pixels of layer=z to F(z=0) part of F
     
+    specstat[z] = [];
     for(var x=0; x<FW; x++) {
       for(var y=0; y<FH; y++) {
         var cell = GetCell(x, y, 0);
         if(cell.a<255) continue;  // dead cell
         var bits = {'iborn': cell.r, 'isurv': cell.g};
         var idx = Idx4Genom(Genom4Bits(bits));
-        if(!specstat[idx]) { specstat[idx] = 0;  gcount ++; }
-        specstat[idx] ++;
+        if(!specstat[z][idx]) { specstat[z][idx] = 0;  gcount ++; }
+        specstat[z][idx] ++;
         ttl ++;
       }
     }
@@ -757,31 +773,36 @@ function ReadStat(force=false) {
   s1 += 'genotypes = ' + gcount + '<br>';
   
   // tracking all species ever reached top-10 or filled 0.1% of field's area
-  var sorted = arsort_keys(specstat);
-  var l = sorted.length, lmt = round(0.001*FW*FH*FD);
-  for(i=0; i<l; i++) {
-    idx = sorted[i];  if(!idx) break;  if(!specstat[idx]) break;
-    if(i<10 || specstat[idx]>lmt) {
-      tracked[idx] = specstat[idx];
+  for(z=0; z<FD; z++) {
+    var sorted = arsort_keys(specstat[z]);
+    var l = sorted.length, lmt = round(0.001*FW*FH);
+    for(i=0; i<l; i++) {
+      idx = sorted[i];  if(!idx) break;  if(!specstat[z][idx]) break;
+      if(i<10 || specstat[z][idx]>lmt) {
+        zidx = z + ': ' + idx;
+        tracked[zidx] = specstat[z][idx];
+      }
+      else break;
     }
-    else break;
   }
   
   // updating all tracked values
-  for(idx in tracked) {
-    tracked[idx] = specstat[idx] ? specstat[idx] : 0;
+  for(zidx in tracked) {
+    z = zidx.substring(0, 1);  idx = zidx.substring(3);
+    tracked[zidx] = specstat[z][idx] ? specstat[z][idx] : 0;
   }
   
   var trsorted = arsort_keys(tracked);
   
   s2 += 'dominating genotypes:<br>';
   for(var j in trsorted) {
-    idx = trsorted[j];
+    zidx = trsorted[j];
+    z = zidx.substring(0, 1);  idx = zidx.substring(3);
     var clr = Color4Bits(Bits4Genom(Genom4Idx(idx)));
     s2 +=
-      '<span style="color:rgb('+clr.r+','+clr.g+','+clr.b+'); background:#000;">' + idx + '</span>'
-      + ' = ' + tracked[idx]
-      + ' = ' + (ttl ? round(tracked[idx]/ttl*100) : '-') + '%'
+      '<span style="color:rgb('+clr.r+','+clr.g+','+clr.b+'); background:#000;">' + z + ':' + idx + '</span>'
+      + ' = ' + tracked[zidx]
+      + ' = ' + (ttl ? round(tracked[zidx]/ttl*100) : '-') + '%'
       + '<br>';
   }
   
@@ -796,7 +817,7 @@ function CalcWorld() {
 
   Calc();
 
-  Show();  //if(!(nturn % 2)) 
+  Show();  //if(!(nturn % 10)) 
   
   nturn ++;
   
