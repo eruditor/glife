@@ -6,7 +6,7 @@ $page->type = "page";
 
 $p = mysql_o("SELECT * FROM rr_pages WHERE typ='k' AND url='alife'");
 
-$ver = 206;
+$ver = 207;
 
 if(true) {
   $otitle = "GLife";
@@ -29,20 +29,21 @@ $page->z .= "
 <div class=ztt>
   <style>
     CANVAS {vertical-align:top; background:#eee; cursor:crosshair; width:400px; height:100px;}
-    #stxt1, #stxt2, #statcanvas {font:normal 11px/11px Lucida Console, Monaco, Monospace; margin-bottom:5px;}
-    #stxt1, #stxt2 {overflow-x:scroll; white-space:nowrap;}
+    #stxt1, #stxt2, #stxt3, #statcanvas {font:normal 11px/11px Lucida Console, Monaco, Monospace; margin-bottom:5px;}
+    #stxt1, #stxt2, #stxt3 {overflow-x:auto; white-space:nowrap;}
     #stxt1 {margin-bottom:10px;}
-    #pausecont {width:400px; text-align:left;}
+    #pausecont {width:400px; text-align:left; padding:0 0 5px 0;}
   </style>
 
   <canvas id='cnv'></canvas><br>
   <div id='pausecont'>
-    <input type='button' value='".($_GET['paused']?"unpause":"pause")."' autofocus onclick='if(paused){paused=0; this.value=`pause`; CalcWorld(); ReadStat();} else {paused=1; this.value=`unpause`;}' style='width:100px;'>
-    <input type='button' value='pause stats' onclick='if(pausestat){pausestat=0; this.value=`pause stats`; ReadStat();} else {pausestat=1; this.value=`unpause stats`;}' style='width:100px;'>
-  </div><br>
+    <input type='button' value='".($_GET['paused']?"unpause":"pause")."' autofocus onclick='if(paused){paused=0; this.value=`pause`; CalcWorld(); Stats();} else {paused=1; this.value=`unpause`;}' style='width:100px;'>
+    <input type='button' value='pause stats' onclick='if(pausestat){pausestat=0; this.value=`pause stats`;} else {pausestat=1; this.value=`unpause stats`;}' style='width:100px;'>
+  </div>
   <div id='stxt1'></div>
+  <div id='stxt2'></div>
   <div id='statcanvas'></div>
-  <div id='stxt2'></div><br>
+  <div id='stxt3'></div>
 
   $ztt
   
@@ -52,7 +53,7 @@ $page->z .= "
 
 <div class=zpubd>$zpubd</div>
 
-<script src='glife".($_GET['ver']=="205pre"?"_205pre":"").".js?v=$ver&r=".rand(1,getrandmax())."'></script>
+<script src='glife.js?v=$ver&r=".rand(1,getrandmax())."'></script>
 
 ";
   

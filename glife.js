@@ -12,6 +12,7 @@ if(debug) {
   paused = 1;  maxfps = 1;
   FW = 10;  FH = 5;
 }
+mode = urlParams.get('random') ? 'random' : '';
 
 // GET SCRIPT SELF ADDRESS
 var scripts = document.getElementsByTagName('script');
@@ -98,9 +99,9 @@ function Color4Bits(bits) {
   ret.b = (born[5] + born[5]) / 2. + (surv[2] + surv[4] + surv[6]) / 3.;
   var l = Math.sqrt(ret.r*ret.r + ret.g*ret.g + ret.b*ret.b);
   if(l>0) {
-    ret.r *= 255 / l;
-    ret.g *= 255 / l;
-    ret.b *= 255 / l;
+    ret.r *= 200 / l;
+    ret.g *= 200 / l;
+    ret.b *= 200 / l;
   }
   return ret;
 }
@@ -119,7 +120,7 @@ var fs_Color4Cell = `
     ret.b = (born[5] + born[5]) / 2. + (surv[2] + surv[4] + surv[6]) / 3.;
     float l = sqrt(ret.r*ret.r + ret.g*ret.g + ret.b*ret.b);
     if(l>0.) {
-      l = l * 255. / float(cell.a);
+      l = l * 200. / float(cell.a);
       ret.r /= l;
       ret.g /= l;
       ret.b /= l;
@@ -316,7 +317,53 @@ var ShowFragmentShaderSource = `
 // 1. Skip bits 0 and 1 for born to keep bit 0 for surv (encoding-decoding logic will become more complicated)
 // 2. Use blue and alpha channels to add one more bit to every gene - Float5 precision instead of Float4 (loosing color decay info in alpha-channel)
 
-if(FD==1) {
+Rules = [];
+
+function RandomRuleStrand(min=0) {
+  var ret = '';
+  var l = rnd(1,9);
+  var r = [];
+  for(var j=0; j<l; j++) {
+    var d = rnd(min, 9);
+    r[d] = 1;
+  }
+  for(var k in r) {
+    if(r[k]) ret += k.toString();
+  }
+  /*
+  var d0 = -1, d;
+  for(var i=0; i<9; i++) {
+    d = rnd(min, 9);
+    if(d<=d0) {
+      if(i>l) break;
+      else continue;
+    }
+    d0 = d;
+    ret += d.toString();
+  }
+  */
+  return ret;
+}
+
+function RandomRule(start_b=0, start_s=0) {
+  return RandomRuleStrand(start_b) + ':' + RandomRuleStrand(start_s);
+}
+
+function RandomRules() {
+  var perplane = 1;
+  for(var z=0; z<FD; z++) {
+    Rules[z] = [];
+    for(var v=0; v<perplane; v++) {
+      Rules[z][v] = RandomRule(1, 1);
+    }
+  }
+  console.log(Rules);
+}
+
+if(mode=='random') {  // random rules to look for something new and interesting
+  RandomRules();
+}
+else if(FD==1) {
   Rules = [
     [
     '37:23',  // DryLife
@@ -335,12 +382,6 @@ if(FD==1) {
     //'3:45678',  // Coral
     //'34578:456',  // Gems Minor
     //'36:235',  // Blinker Life
-    ],
-  ];
-  Rules = [
-    [
-    '357:238',
-    '36:125',
     ],
   ];
 }
@@ -364,8 +405,44 @@ else {
       '',
     ],
   ];
+  Rules = [
+    ["368:134567"],
+    ["13567:47"],
+    ["12678:138"],
+  ];
+  //Rules = [ ['28:18'], ['13:58'], ['12:14'] ];  // chaotic fox
 }
+/*
+0: (2) ["234578:25678", "1456:14568"]
+1: (2) ["1357:125", "138:23"]
+2: (2) ["25:12358", "5:13456"]
+3: (2) ["1246:367", "34567:137"]
 
+0: (2) ["368:23456", "12467:367"]
+1: (2) ["46:28", "235678:17"]
+2: (2) ["34568:1258", "158:1356"]
+3: (2) ["18:124678", "1456:345678"]
+
+0: (2) ["247:18", "7:137"]
+1: (2) ["23458:14567", "6:24678"]
+2: (2) ["45:1356", "1258:3"]
+
+0: ["3567:12368"]
+1: ["123578:357"]
+2: ["2:23578"]
+
+0: ["1245678:1245678"]
+1: ["25678:4578"]
+2: ["124:1345"]
+
+0: ["1347:23478"]
+1: ["23578:248"]
+2: ["1:25"]
+
+0: ["368:134567"]
+1: ["13567:47"]
+2: ["12678:138"]
+*/
 if(debug) Rules = [
   ['37:23', '36:125'],
   ['37:23', '36:125'],
@@ -403,6 +480,8 @@ function Genom4Bits(ibs) {
 // idx is encoding of genes to print them on the screen as sequences of chars
 // 0 a b c d e f g h i  j  k  l  m  n  1
 // 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+// idx4 encoding to 0, 1/4, 1/2, 3/4, 1 looks like this:
+// 0 0 A A A A B B B B  C  C  C  C  1  1
 
 function Idx4Strand(strand) {
   var idx = '', d;
@@ -434,6 +513,36 @@ function Strand4Idx(idx) {
 
 function Genom4Idx(idx) {
   return {'born':Strand4Idx(idx.substring(0,9)), 'surv':Strand4Idx(idx.substring(10,19))};
+}
+
+function Idx54Idx(idx) {
+  var l = idx.length, ret = '';
+  for(var j=0; j<l; j++) {
+    var c = idx[j], c5 = '';
+         if(c=='0' || c=='a')                     c5 = '0';
+    else if(c=='b' || c=='c' || c=='d' || c=='e') c5 = 'A';
+    else if(c=='f' || c=='g' || c=='h' || c=='i') c5 = 'B';
+    else if(c=='j' || c=='k' || c=='l' || c=='m') c5 = 'C';
+    else if(c=='n' || c=='1')                     c5 = '1';
+    else c5 = ':';
+    ret += c5;
+  }
+  return ret;
+}
+
+function Idx4Idx5(idx5) {
+  var l = idx5.length, ret = '';
+  for(var j=0; j<l; j++) {
+    var c5 = idx5[j], c = '';
+         if(c5=='0') c = '0';
+    else if(c5=='A') c = 'c';
+    else if(c5=='B') c = 'g';
+    else if(c5=='C') c = 'l';
+    else if(c5=='1') c = '1';
+    else c = ':';
+    ret += c;
+  }
+  return ret;
 }
 
 // COMMON MATH ////////////////////////////////////////////////////////////////
@@ -484,6 +593,8 @@ function InitSetCell(x, y, z, r) {
 }
 
 function InitialFill() {
+  F.fill(0);  // zeroing F in case this call is to restart everything
+  
   if(debug) {
     if(1) {
       InitSetCell(1, 2, 0, 0);
@@ -504,7 +615,7 @@ function InitialFill() {
   for(var z=0; z<FD; z++) {
     for(var x=round(FW/2-FW*lx/2); x<round(FW/2+FW*lx/2); x++) {
       for(var y=round(FH/2-FH*ly/2); y<round(FH/2+FH*ly/2); y++) {
-        if(z==2 && y<FH/2) continue; // not too much predators
+        if(z>=2 && y<FH/2) continue; // not too much predators
         var density = round((1 - Math.abs(2*y/FH-1)/ly)*10)/10;  // Math.sin(Math.PI * x / FW);
         if(Math.random()<=density) {
           var r = floor(Rules[z].length * (x-round(FW/2-FW*lx/2)) / FW / lx);
@@ -513,9 +624,9 @@ function InitialFill() {
       }
     }
   }
-}
-
-InitialFill();  if(debug) console.log(F);
+  
+  if(debug) console.log(F);
+} 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -577,7 +688,7 @@ ShowProgram.location.u_canvas       = gl.getUniformLocation(ShowProgram, "u_canv
 
 // CANVAS SIZE ////////////////////////////////////////////////////////////////
 
-if(document.body.clientWidth < document.body.clientHeight) [FW, FH] = [FH, FW];
+//if(document.body.clientWidth < document.body.clientHeight) [FW, FH] = [FH, FW];
 var zoomx = Math.floor(0.9 * document.body.clientWidth  / FW);  if(zoomx<1) zoomx = 1;
 var zoomy = Math.floor(0.9 * document.body.clientHeight / FH);  if(zoomy<1) zoomy = 1;
 zoom = Math.min(zoomx, zoomy);
@@ -590,18 +701,24 @@ canvas.height = zoom * FH;  canvas.style.height = canvas.height + 'px';
 document.getElementById('pausecont').style.width = canvas.width + 'px';
 
 function resizeCanvasToDisplaySize(canvas) {
-  // Lookup the size the browser is displaying the canvas.
-  var displayWidth  = canvas.clientWidth;
-  var displayHeight = canvas.clientHeight;
- 
-  // Check if the canvas is not the same size.
-  if (canvas.width  != displayWidth ||
-      canvas.height != displayHeight) {
- 
-    // Make the canvas the same size
-    canvas.width  = displayWidth;
-    canvas.height = displayHeight;
+  var displayWidth = canvas.clientWidth, displayHeight = canvas.clientHeight;  // Lookup the size the browser is displaying the canvas
+  if(canvas.width!=displayWidth || canvas.height!=displayHeight) {  // Check if the canvas is not the same size
+    canvas.width = displayWidth;  canvas.height = displayHeight;  // Make the canvas the same size
   }
+}
+
+// stats canvas
+scnv_height = 100;
+scnvs = sctxs = [];
+sdiv = document.getElementById('statcanvas');
+sdiv.innerHTML = 'species population (log scale):<br>';
+for(var z=0; z<FD; z++) {
+  scnvs[z] = document.createElement('canvas');
+  sdiv.appendChild(scnvs[z]);
+  scnvs[z].width  = zoom * FW;    scnvs[z].style.width  = scnvs[z].width  + 'px';
+  scnvs[z].height = scnv_height;  scnvs[z].style.height = scnvs[z].height + 'px';
+  scnvs[z].style.margin = '0 0 5px 0';
+  sctxs[z] = scnvs[z].getContext('2d');
 }
 
 // VERTICES ////////////////////////////////////////////////////////////////
@@ -677,17 +794,30 @@ Framebuffers = new Array(2);
 Framebuffers[0] = CreateFramebuffer(Textures[0]);
 Framebuffers[1] = CreateFramebuffer(Textures[1]);
 
-SetTexture(T0, Textures[T0], FW, FH, FD, F);
-
 // RENDERING ////////////////////////////////////////////////////////////////
 
-var tracked = [];
-var nturn = 0;
-var date0 = new Date;
-var timerv = 0, timern = 0;
+function Start() {
+  nturn = 0;
+  date0 = new Date;
+  timerv = 0, timern = 0;
+  tracked = [], tracked5 = [];
+  prevpoints = [], infostep = -1;
+  frozentime = [];  for(z=0; z<FD; z++) frozentime[z] = 0;
+  
+  T0 = 0;  T1 = 1;
+  
+  InitialFill();
+  
+  SetTexture(T0, Textures[T0], FW, FH, FD, F);
+  
+  for(z=0; z<FD; z++) sctxs[z].clearRect(0, 0, FW * zoom, scnv_height);
+}
+
+Start();
 
 Show();  // draw initial state as first frame (useful for GET-paused mode)
-ReadStat(true);
+
+Stats(true);
 
 CalcWorld();
 
@@ -734,12 +864,8 @@ function Show() {
   gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
 }
 
-function ReadStat(force=false) {
-  if((paused || pausestat) && !force) return 0;
-  
-  var x, y, z, idx, zidx;
-  
-  var s1 = '', s2 = '';
+function Stats(force=false) {
+  var s1 = '', s2 = '', s3 = '';
   
   s1 += 'r = ' + selfParams.get('r') + '<br>';
   s1 += 'turn = ' + nturn + '<br>';
@@ -748,68 +874,178 @@ function ReadStat(force=false) {
   timerv = 0;  timern = 0;
   s1 += 'fps = ' + round(1000 / ms) + '<br>';
   
-  gl.bindFramebuffer(gl.FRAMEBUFFER, Framebuffers[T0]);
-  
-  var specstat = [], ttl = 0, gcount = 0;
-  for(var z=0; z<FD; z++) {
+  if((paused || pausestat) && !force) {
     
-    gl.readBuffer(gl.COLOR_ATTACHMENT0 + z);
-    gl.readPixels(0, 0, FW, FH, gldata_Format, gldata_Type, F);  // reading pixels of layer=z to F(z=0) part of F
+  }
+  else {
+    var x, y, z, idx, idx5, zidx, zidx5;
     
-    specstat[z] = [];
-    for(var x=0; x<FW; x++) {
-      for(var y=0; y<FH; y++) {
-        var cell = GetCell(x, y, 0);
-        if(cell.a<255) continue;  // dead cell
-        var bits = {'iborn': cell.r, 'isurv': cell.g};
-        var idx = Idx4Genom(Genom4Bits(bits));
-        if(!specstat[z][idx]) { specstat[z][idx] = 0;  gcount ++; }
-        specstat[z][idx] ++;
-        ttl ++;
+    infostep ++;
+    
+    gl.bindFramebuffer(gl.FRAMEBUFFER, Framebuffers[T0]);
+    
+    var ttl = 0;  // total number of living cells
+    var gcount = 0;  // number of different genoms if the biosphere
+    
+    var specstat = [];  // precise stat for top-genom list
+    var specstat5 = [];  // rounded stat for graph
+    
+    var qd=10, qx, qy, qq = []; // grid of squares qd*qd with coordinates (qx,qy) is to measure how species spread
+    var maxqx = floor(FW / qd), maxqy = floor(FH / qd);
+    
+    for(var z=0; z<FD; z++) {
+      
+      gl.readBuffer(gl.COLOR_ATTACHMENT0 + z);
+      gl.readPixels(0, 0, FW, FH, gldata_Format, gldata_Type, F);  // reading pixels of layer=z to F(z=0) part of F
+      
+      specstat[z] = [];  specstat5[z] = [];  qq[z] = [];
+      
+      for(var x=0; x<FW; x++) {
+        qx = floor(x / qd);
+        if(!qq[z][qx]) qq[z][qx] = [];
+        for(var y=0; y<FH; y++) {
+          var cell = GetCell(x, y, 0);
+          if(cell.a<255) continue;  // dead cell
+          
+          var bits = {'iborn': cell.r, 'isurv': cell.g};
+          idx = Idx4Genom(Genom4Bits(bits));
+          idx5 = Idx54Idx(idx);
+          if(!specstat[z][idx]) { specstat[z][idx] = 0;  specstat5[z][idx5] = 0;  gcount ++; }
+          specstat[z][idx] ++;
+          specstat5[z][idx5] ++;
+          ttl ++;
+          
+          qy = floor(y / qd);
+          if(!qq[z][qx][qy]) qq[z][qx][qy] = 0;
+          qq[z][qx][qy] ++;  // each element of qq stores number of living cells in this square
+        }
+      }
+    }
+    s2 += 'live cells = ' + ttl + '<br>';
+    s2 += 'genoms = ' + gcount + '<br>';
+    
+    // counting squares
+    var nqempty = [];  // number of empty squares
+    for(z=0; z<FD; z++) {
+      nqempty[z] = 0;
+      for(qx=0; qx<maxqx; qx++) {
+        for(qy=0; qy<maxqy; qy++) {
+          if(!qq[z][qx][qy]) nqempty[z] ++;
+        }
+      }
+    }
+    
+    // tracking all species ever reached top-10 or filled 0.1% of field's area
+    for(z=0; z<FD; z++) {
+      var sorted = arsort_keys(specstat[z]);
+      var l = sorted.length, lmt = round(0.001*FW*FH);
+      for(i=0; i<l; i++) {
+        idx = sorted[i];  if(!idx) break;  if(!specstat[z][idx]) break;
+        if(i<10 || specstat[z][idx]>lmt) {
+          zidx = z + ': ' + idx;
+          tracked[zidx] = specstat[z][idx];
+          idx5 = Idx54Idx(idx);
+          zidx5 = z + ': ' + idx5;
+          tracked5[zidx5] = specstat5[z][idx5];
+        }
+        else break;
+      }
+    }
+    
+    // updating all tracked values
+    for(zidx in tracked) {
+      z = zidx.substring(0, 1);  idx = zidx.substring(3);
+      tracked[zidx] = specstat[z][idx] ? specstat[z][idx] : 0;
+    }
+    for(zidx5 in tracked5) {
+      z = zidx5.substring(0, 1);  idx5 = zidx5.substring(3);
+      tracked5[zidx5] = specstat5[z][idx5] ? specstat5[z][idx5] : 0;
+    }
+    
+    s3 += 'dominating genoms:<br>';
+    var trsorted = arsort_keys(tracked);
+    for(var j in trsorted) {
+      zidx = trsorted[j];
+      z = zidx.substring(0, 1);  idx = zidx.substring(3);
+      
+      var clr = Color4Bits(Bits4Genom(Genom4Idx(idx)));
+      s3 +=
+        '<span style="color:rgb('+clr.r+','+clr.g+','+clr.b+'); background:#000;">' + z + ':' + idx + '</span>'
+        + ' = ' + tracked[zidx]
+        + ' = ' + (ttl ? round(tracked[zidx]/ttl*100) : '-') + '%'
+        + '<br>';
+    }
+    
+    nonfrozen = [];
+    for(z=0; z<FD; z++) nonfrozen[z] = 0;
+    
+    // plotting graphs
+    if(infostep<zoom*FW) {
+      for(zidx5 in tracked5) {
+        z = zidx5.substring(0, 1);  idx5 = zidx5.substring(3);
+        
+        var clr = Color4Bits(Bits4Genom(Genom4Idx(Idx4Idx5(idx5))));
+        
+        var xx = infostep;
+        var yy = scnv_height - round(Math.log2(tracked5[zidx5]) / Math.log2(FW*FH) * scnv_height); // Math.log2 or cbrt here
+        var style = 'rgb('+clr.r+','+clr.g+','+clr.b+')';
+        if(prevpoints[zidx5] && xx>0) {
+          sctxs[z].beginPath();
+          sctxs[z].strokeStyle = style;
+          sctxs[z].moveTo(xx-1, prevpoints[zidx5]);
+          sctxs[z].lineTo(xx, yy);
+          sctxs[z].stroke();
+        }
+        else {
+          sctxs[z].fillStyle = style;
+          sctxs[z].fillRect(xx, yy, 1, 1);
+        }
+        
+        if(prevpoints[zidx5]!=yy) nonfrozen[z] ++;
+        
+        prevpoints[zidx5] = yy;
+      }
+    }
+    
+    // for how long planes are frozen
+    for(z=0; z<FD; z++) {
+      if(!nonfrozen[z]) frozentime[z] ++;
+      else              frozentime[z] = 0;
+    }
+    
+    // empty or full or frozen planes
+    var interesting_z = 0;  // number of planes that are not full and not dead and not frozen
+    var nonfrozen_z = 0;  // number of nonfrozen planes
+    for(z=0; z<FD; z++) {
+      var spread = 100 * nqempty[z] / maxqx / maxqy;
+      var st = round(spread) + '%';
+           if(spread>90) st = '<span style="background:#d00;">' + st + '</span>';
+      else if(spread< 1) st = '<span style="background:#777;">' + st + '</span>';
+      else if(frozentime[z]>=10) st = st;
+      else interesting_z ++;
+      
+      if(frozentime[z]>0) st += ' frozen = <span style="background:#ff0;">' + frozentime[z] + '</span>';
+      
+      s2 += 'nqempty[' + z + '] = ' + nqempty[z] + ' (' + st + ')<br>';
+    }
+    
+    // if no interesting planes left - restart
+    if(!interesting_z && nturn>1000 && nturn<10000) {
+      if(mode=='random') {
+        RandomRules();
+        Start();
+      }
+      else {
+        paused = 1;
       }
     }
   }
-  s1 += 'live cells = ' + ttl + '<br>';
-  s1 += 'genotypes = ' + gcount + '<br>';
   
-  // tracking all species ever reached top-10 or filled 0.1% of field's area
-  for(z=0; z<FD; z++) {
-    var sorted = arsort_keys(specstat[z]);
-    var l = sorted.length, lmt = round(0.001*FW*FH);
-    for(i=0; i<l; i++) {
-      idx = sorted[i];  if(!idx) break;  if(!specstat[z][idx]) break;
-      if(i<10 || specstat[z][idx]>lmt) {
-        zidx = z + ': ' + idx;
-        tracked[zidx] = specstat[z][idx];
-      }
-      else break;
-    }
-  }
+  if(s1) document.getElementById('stxt1').innerHTML = s1;
+  if(s2) document.getElementById('stxt2').innerHTML = s2;
+  if(s3) document.getElementById('stxt3').innerHTML = s3;
   
-  // updating all tracked values
-  for(zidx in tracked) {
-    z = zidx.substring(0, 1);  idx = zidx.substring(3);
-    tracked[zidx] = specstat[z][idx] ? specstat[z][idx] : 0;
-  }
-  
-  var trsorted = arsort_keys(tracked);
-  
-  s2 += 'dominating genotypes:<br>';
-  for(var j in trsorted) {
-    zidx = trsorted[j];
-    z = zidx.substring(0, 1);  idx = zidx.substring(3);
-    var clr = Color4Bits(Bits4Genom(Genom4Idx(idx)));
-    s2 +=
-      '<span style="color:rgb('+clr.r+','+clr.g+','+clr.b+'); background:#000;">' + z + ':' + idx + '</span>'
-      + ' = ' + tracked[zidx]
-      + ' = ' + (ttl ? round(tracked[zidx]/ttl*100) : '-') + '%'
-      + '<br>';
-  }
-  
-  document.getElementById('stxt1').innerHTML = s1;
-  document.getElementById('stxt2').innerHTML = s2;
-  
-  if(!paused && !pausestat) setTimeout(ReadStat, 1000);
+  if(!paused) setTimeout(Stats, 1000);
 }
 
 function CalcWorld() {
