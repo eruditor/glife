@@ -6,7 +6,9 @@ $page->type = "page";
 
 $p = mysql_o("SELECT * FROM rr_pages WHERE typ='k' AND url='alife'");
 
-$ver = 207;
+$ver = 208;
+
+$rand = intval($_GET['seed']) ?: rand(1,getrandmax());
 
 if(true) {
   $otitle = "GLife";
@@ -29,22 +31,27 @@ $page->z .= "
 <div class=ztt>
   <style>
     CANVAS {vertical-align:top; background:#eee; cursor:crosshair; width:400px; height:100px;}
-    #stxt1, #stxt2, #stxt3, #statcanvas {font:normal 11px/11px Lucida Console, Monaco, Monospace; margin-bottom:5px;}
-    #stxt1, #stxt2, #stxt3 {overflow-x:auto; white-space:nowrap;}
-    #stxt1 {margin-bottom:10px;}
-    #pausecont {width:400px; text-align:left; padding:0 0 5px 0;}
+    DIV.stxt {font:normal 11px/11px Lucida Console, Monaco, Monospace; margin-top:5px; overflow-x:auto; white-space:nowrap;}
+    DIV#statcanvas {overflow-x:visible; white-space:normal;}
+    #topbar {width:400px; text-align:left; padding:0 0 0 0;}
+    #topbar INPUT[type=button] {width:100px;}
+    #topform {float:right; font:normal 14px/17px Arial;}
   </style>
-
-  <canvas id='cnv'></canvas><br>
-  <div id='pausecont'>
-    <input type='button' value='".($_GET['paused']?"unpause":"pause")."' autofocus onclick='if(paused){paused=0; this.value=`pause`; CalcWorld(); Stats();} else {paused=1; this.value=`unpause`;}' style='width:100px;'>
-    <input type='button' value='pause stats' onclick='if(pausestat){pausestat=0; this.value=`pause stats`;} else {pausestat=1; this.value=`unpause stats`;}' style='width:100px;'>
+  
+  <div id='topbar'>
+    <input type='button' id='pausebtn' value='".($_GET['paused']?"unpause":"pause")."' autofocus onclick='Pause()'>
+    <input type='button' id='pausestatbtn' value='pause stats' onclick='PauseStat()'>
+    <form method=GET action='$_self' id='topform'></form>
   </div>
-  <div id='stxt1'></div>
-  <div id='stxt2'></div>
-  <div id='statcanvas'></div>
-  <div id='stxt3'></div>
-
+  
+  <canvas id='cnv'></canvas><br>
+  
+  <div id='stxtfps'    class='stxt' style='margin-bottom:10px;'></div>
+  <div id='stxtstat'   class='stxt'></div>
+  <div id='statcanvas' class='stxt'></div>
+  <div id='stxtgenom'  class='stxt'></div>
+  <div id='stxtlog'    class='stxt'></div>
+  
   $ztt
   
 </div>
@@ -53,7 +60,8 @@ $page->z .= "
 
 <div class=zpubd>$zpubd</div>
 
-<script src='glife.js?v=$ver&r=".rand(1,getrandmax())."'></script>
+<script src='lib/rules.js?v=$ver&r=$rand'></script>
+<script src='glife.js?v=$ver&r=$rand'></script>
 
 ";
   

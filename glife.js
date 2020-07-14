@@ -1,23 +1,55 @@
 // GET PARAMS ////////////////////////////////////////////////////////////////
 
+// get GET params
 const urlParams = new URLSearchParams(window.location.search);
-debug = urlParams.get('debug') ? 1 : 0;
-paused = urlParams.get('paused') ? 1 : 0;
-pausestat = urlParams.get('pausestat') ? 1 : 0;
-maxfps = intval(urlParams.get('maxfps'));
-FW = 600;  if(urlParams.get('FW')>0) FW = intval(urlParams.get('FW'));
-FH = 350;  if(urlParams.get('FH')>0) FH = intval(urlParams.get('FH'));
-FD =   3;  if(urlParams.get('FD')>0) FD = intval(urlParams.get('FD'));
-if(debug) {
-  paused = 1;  maxfps = 1;
-  FW = 10;  FH = 5;
-}
-mode = urlParams.get('random') ? 'random' : '';
-
-// GET SCRIPT SELF ADDRESS
+// get script self address
 var scripts = document.getElementsByTagName('script');
 var myScript = scripts[scripts.length - 1];
 const selfParams = new URLSearchParams(myScript.src);
+
+debug = urlParams.get('debug') ? 1 : 0;
+paused = urlParams.get('paused') ? 1 : 0;
+pausestat = urlParams.get('pausestat') ? 1 : 0;
+maxfps = intval(urlParams.get('maxfps'));  // Calc framerate limit
+showiter = intval(urlParams.get('showiter'));  // Show once per showiter Calcs
+FW = 600;  if(urlParams.get('FW')>0) FW = intval(urlParams.get('FW'));
+FH = 350;  if(urlParams.get('FH')>0) FH = intval(urlParams.get('FH'));
+FD =   3;  if(urlParams.get('FD')>0) FD = intval(urlParams.get('FD'));
+ruleset = urlParams.get('ruleset');
+seed = intval(urlParams.get('seed') || selfParams.get('r'));
+
+if(debug) {
+  paused = 1;  maxfps = 1;
+  FW = 10;  FH = 5;
+  ruleset = 'Debug';
+}
+
+if(!ruleset) {
+  if(FD==1) ruleset = 'Classic1D';
+  else      ruleset = 'Aphrodite';
+}
+
+// COMMON MATH ////////////////////////////////////////////////////////////////
+
+function intval(x) { if(!x) return 0;  return parseInt(x, 10); }
+function floor(x) { return Math.floor(x); }
+function round(x) { return Math.round(x); }
+
+function arsort_keys(obj) {
+  var keys = Object.keys(obj);
+  return keys.sort(function(a,b){return obj[b]-obj[a]});
+}
+
+function mulberry32(a) {
+  return function() {
+    var t = a += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  }
+}
+rand32 = mulberry32(seed);
+function rnd(a, b) { return Math.floor(rand32()*(b-a)) + a; }  // rand32() <-> Math.random()
 
 // GLSL SHADERS ////////////////////////////////////////////////////////////////
 
@@ -43,7 +75,7 @@ var LifeVertexShaderSource = `
   }
 `;
 
-function Bit4Gene(v, i) {//i += 10;
+function Bit4Gene(v, i) {
   //return (v << i) >>> 0;  // for 1-bit genes
   if(v==0) return 0;
   var numerator = round(15*v);
@@ -66,7 +98,7 @@ var fs_Bit4Gene = `
   }
 `;
 
-function Gene4Bit(x, i) {//i += 10;
+function Gene4Bit(x, i) {
   //return (x >>> i) & 1;
   if(x==0) return 0;
   var numerator = 0;
@@ -317,138 +349,7 @@ var ShowFragmentShaderSource = `
 // 1. Skip bits 0 and 1 for born to keep bit 0 for surv (encoding-decoding logic will become more complicated)
 // 2. Use blue and alpha channels to add one more bit to every gene - Float5 precision instead of Float4 (loosing color decay info in alpha-channel)
 
-Rules = [];
-
-function RandomRuleStrand(min=0) {
-  var ret = '';
-  var l = rnd(1,9);
-  var r = [];
-  for(var j=0; j<l; j++) {
-    var d = rnd(min, 9);
-    r[d] = 1;
-  }
-  for(var k in r) {
-    if(r[k]) ret += k.toString();
-  }
-  /*
-  var d0 = -1, d;
-  for(var i=0; i<9; i++) {
-    d = rnd(min, 9);
-    if(d<=d0) {
-      if(i>l) break;
-      else continue;
-    }
-    d0 = d;
-    ret += d.toString();
-  }
-  */
-  return ret;
-}
-
-function RandomRule(start_b=0, start_s=0) {
-  return RandomRuleStrand(start_b) + ':' + RandomRuleStrand(start_s);
-}
-
-function RandomRules() {
-  var perplane = 1;
-  for(var z=0; z<FD; z++) {
-    Rules[z] = [];
-    for(var v=0; v<perplane; v++) {
-      Rules[z][v] = RandomRule(1, 1);
-    }
-  }
-  console.log(Rules);
-}
-
-if(mode=='random') {  // random rules to look for something new and interesting
-  RandomRules();
-}
-else if(FD==1) {
-  Rules = [
-    [
-    '37:23',  // DryLife
-    '38:23',  // Pedestrian Life
-    '357:238',  // Pseudo Life
-    '36:125',  // 2x2
-    '3:23',  // Conway's Life
-    '368:238',  // LowDeath
-    '36:23',  // HighLife
-    '38:238',  // HoneyLife
-    '3:238',  // EightLife
-    
-    //'357:1358',  // Amoeba
-    //'35678:5678',  // Diamoeba
-    //'34:456',  // Bacteria
-    //'3:45678',  // Coral
-    //'34578:456',  // Gems Minor
-    //'36:235',  // Blinker Life
-    ],
-  ];
-}
-else {
-  Rules = [
-    [  // plants
-      '35678:5678',
-    ],
-    [  // herbivores
-      '347:235',
-      '',
-      '3568:2367',
-    ],
-    [  // carnivores
-      '',
-      '12:1',
-      '12:14',
-      '',
-    ],
-    [
-      '',
-    ],
-  ];
-  Rules = [
-    ["368:134567"],
-    ["13567:47"],
-    ["12678:138"],
-  ];
-  //Rules = [ ['28:18'], ['13:58'], ['12:14'] ];  // chaotic fox
-}
-/*
-0: (2) ["234578:25678", "1456:14568"]
-1: (2) ["1357:125", "138:23"]
-2: (2) ["25:12358", "5:13456"]
-3: (2) ["1246:367", "34567:137"]
-
-0: (2) ["368:23456", "12467:367"]
-1: (2) ["46:28", "235678:17"]
-2: (2) ["34568:1258", "158:1356"]
-3: (2) ["18:124678", "1456:345678"]
-
-0: (2) ["247:18", "7:137"]
-1: (2) ["23458:14567", "6:24678"]
-2: (2) ["45:1356", "1258:3"]
-
-0: ["3567:12368"]
-1: ["123578:357"]
-2: ["2:23578"]
-
-0: ["1245678:1245678"]
-1: ["25678:4578"]
-2: ["124:1345"]
-
-0: ["1347:23478"]
-1: ["23578:248"]
-2: ["1:25"]
-
-0: ["368:134567"]
-1: ["13567:47"]
-2: ["12678:138"]
-*/
-if(debug) Rules = [
-  ['37:23', '36:125'],
-  ['37:23', '36:125'],
-  ['37:23', '36:125'],
-  ['37:23', '36:125']
-];
+Rules = GetRuleset(ruleset);
 
 function Strand4Rule(r) {
   var strand = [0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -545,18 +446,6 @@ function Idx4Idx5(idx5) {
   return ret;
 }
 
-// COMMON MATH ////////////////////////////////////////////////////////////////
-
-function intval(x) { return parseInt(x, 10); }
-function floor(x) { return Math.floor(x); }
-function round(x) { return Math.round(x); }
-function rnd(a, b) { return Math.floor(Math.random()*(b-a)) + a; }
-
-function arsort_keys(obj) {
-  var keys = Object.keys(obj);
-  return keys.sort(function(a,b){return obj[b]-obj[a]});
-}
-
 // SPACE (FIELD) ////////////////////////////////////////////////////////////////
 
 F = new Uint32Array(4 * FW * FH * FD);  //Float32Array  //Uint8Array
@@ -601,7 +490,6 @@ function InitialFill() {
       InitSetCell(2, 2, 0, 0);
       InitSetCell(3, 2, 0, 1);
     }
-    
     if(FD>2) {
       InitSetCell(8, 2, 2, 0);
       InitSetCell(7, 2, 2, 0);
@@ -610,14 +498,14 @@ function InitialFill() {
     return;
   }
   
-  var lx = 1.0, ly = 0.9;
+  var lx = 1.0, ly = 0.8;
   
   for(var z=0; z<FD; z++) {
     for(var x=round(FW/2-FW*lx/2); x<round(FW/2+FW*lx/2); x++) {
       for(var y=round(FH/2-FH*ly/2); y<round(FH/2+FH*ly/2); y++) {
         if(z>=2 && y<FH/2) continue; // not too much predators
-        var density = round((1 - Math.abs(2*y/FH-1)/ly)*10)/10;  // Math.sin(Math.PI * x / FW);
-        if(Math.random()<=density) {
+        var density = round((1 - Math.abs(2*y/FH-1)/ly)*10);
+        if(rnd(0,10)<density) {
           var r = floor(Rules[z].length * (x-round(FW/2-FW*lx/2)) / FW / lx);
           InitSetCell(x, y, z, r);
         }
@@ -626,7 +514,21 @@ function InitialFill() {
   }
   
   if(debug) console.log(F);
-} 
+}
+
+// INTERFACE ////////////////////////////////////////////////////////////////
+
+function Pause() {
+  var btn = document.getElementById('pausebtn');
+  if(paused) { paused = 0;  btn.value = 'pause';  Start(); }
+  else       { paused = 1;  btn.value = 'unpause'; }
+}
+
+function PauseStat() {
+  var btn = document.getElementById('pausestatbtn');
+  if(pausestat) { pausestat = 0;  btn.value = 'pause stats';   }
+  else          { pausestat = 1;  btn.value = 'unpause stats'; }
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -698,7 +600,7 @@ FWzoom = FW * zoom;
 canvas.width  = zoom * FW;  canvas.style.width  = canvas.width  + 'px';
 canvas.height = zoom * FH;  canvas.style.height = canvas.height + 'px';
 
-document.getElementById('pausecont').style.width = canvas.width + 'px';
+document.getElementById('topbar').style.width = canvas.width + 'px';
 
 function resizeCanvasToDisplaySize(canvas) {
   var displayWidth = canvas.clientWidth, displayHeight = canvas.clientHeight;  // Lookup the size the browser is displaying the canvas
@@ -708,7 +610,7 @@ function resizeCanvasToDisplaySize(canvas) {
 }
 
 // stats canvas
-scnv_height = 100;
+scnv_height = 150;
 scnvs = sctxs = [];
 sdiv = document.getElementById('statcanvas');
 sdiv.innerHTML = 'species population (log scale):<br>';
@@ -720,6 +622,34 @@ for(var z=0; z<FD; z++) {
   scnvs[z].style.margin = '0 0 5px 0';
   sctxs[z] = scnvs[z].getContext('2d');
 }
+
+// HTML TOP FORM ////////////////////////////////////////////////////////////////
+
+function CreateTopForm() {
+  topform = document.getElementById('topform');
+  var ret = '', sp = ' &nbsp; ';
+  ret += sp;
+  
+  var s = '';  for(var t=1; t<=4; t++) s += '<option value="' + t + '" ' + (t==FD?'selected':'') + '>' + t;
+  ret += '<span title="Field Depth">FD=</span><select name="FD" id="FDsel">' + s + '</select>' + sp;
+  
+  ret += '<span title="Field Width">FW=</span><input type=text name="FW" value="' + FW + '" size=4>' + sp;
+  
+  ret += '<span title="Field Height">FH=</span><input type=text name="FH" value="' + FH + '" size=4>' + sp;
+  
+  var s = '';  for(var t in {'random':[], ...NamedRules}) s += '<option value="' + t + '" ' + (t==ruleset?'selected':'') + '>' + t;
+  var onchange = `if(this.value!='random') document.getElementById('FDsel').value = NamedRules[this.value].length`;
+  ret += '<span title="NamedRules">Rule=</span><select name="ruleset" onchange="' + onchange + '">' + s + '</select>' + sp;
+  
+  ret += '<span title="0 = requestAnimationFrame, 1000 = no setTimeout">maxfps=</span><input type=text name="maxfps" value="' + maxfps + '" size=4>' + sp;
+  
+  ret += '<span title="">seed=</span><input type=text name="seed" value="' + seed + '" size=10>' + sp;
+  
+  ret += '<input type=submit value=" OK ">';
+  
+  return ret;
+}
+topform.innerHTML += CreateTopForm();
 
 // VERTICES ////////////////////////////////////////////////////////////////
 
@@ -758,7 +688,6 @@ function CreateTexture(width, height, depth=1) {
   var texture = gl.createTexture();
   gl.bindTexture(gl.TEXTURE_3D, texture);
   
-  //gl.texImage2D(gl.TEXTURE_2D, 0, gldata_InternalFormat, width, height, 0, gldata_Format, gldata_Type, null);
   gl.texImage3D(gl.TEXTURE_3D, 0, gldata_InternalFormat, width, height, depth, 0, gldata_Format, gldata_Type, null);
   
   gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -772,14 +701,12 @@ function CreateTexture(width, height, depth=1) {
 function SetTexture(texture_num, texture, width, height, depth=1, data) {
   gl.activeTexture(gl.TEXTURE0 + texture_num);
   gl.bindTexture(gl.TEXTURE_3D, texture);
-  //gl.texImage2D(gl.TEXTURE_2D, 0, gldata_InternalFormat, width, height, 0, gldata_Format, gldata_Type, data);
   gl.texImage3D(gl.TEXTURE_3D, 0, gldata_InternalFormat, width, height, depth, 0, gldata_Format, gldata_Type, data);
 }
 
 function CreateFramebuffer(texture) {
   var framebuffer = gl.createFramebuffer();
   gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-  //gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
   for(let layer=0; layer<FD; layer++) {
     gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + layer, texture, 0, layer);
   }
@@ -796,10 +723,12 @@ Framebuffers[1] = CreateFramebuffer(Textures[1]);
 
 // RENDERING ////////////////////////////////////////////////////////////////
 
-function Start() {
+function Init() {
   nturn = 0;
+  nturn0 = 0;
+  nshow = 0;
   date0 = new Date;
-  timerv = 0, timern = 0;
+  
   tracked = [], tracked5 = [];
   prevpoints = [], infostep = -1;
   frozentime = [];  for(z=0; z<FD; z++) frozentime[z] = 0;
@@ -813,15 +742,21 @@ function Start() {
   for(z=0; z<FD; z++) sctxs[z].clearRect(0, 0, FW * zoom, scnv_height);
 }
 
+Init();
+
+function Start() {
+  Show();  // draw initial state as first frame (useful for GET-paused mode)
+  
+  Stats(true);
+  
+  Calc();  // start Calc-ing world iterations
+}
+
 Start();
 
-Show();  // draw initial state as first frame (useful for GET-paused mode)
-
-Stats(true);
-
-CalcWorld();
-
 function Calc() {
+  if(paused) return 0;
+  
   gl.useProgram(CalcProgram);
   
   gl.bindFramebuffer(gl.FRAMEBUFFER, Framebuffers[T1]);
@@ -841,6 +776,16 @@ function Calc() {
   gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
 
   FlipTime();
+  
+  nturn ++;
+  
+  if(showiter) { if(nturn % showiter == 0) Show(); }
+  else if(maxfps<=60) Show();
+  // else Show() rotates in its own cycle
+  
+  if(maxfps>=1000) Calc();
+  else if(maxfps)  setTimeout(Calc, 1000 / maxfps);
+  else             requestAnimationFrame(Calc);
 }
 
 function Show() {
@@ -862,20 +807,26 @@ function Show() {
   gl.uniform1i(ShowProgram.location.u_fieldtexture, T0);
   
   gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+  
+  nshow ++;
+  
+  if(maxfps>60 && !showiter) requestAnimationFrame(Show);  // overwise Show() is called in Calc()
 }
 
 function Stats(force=false) {
-  var s1 = '', s2 = '', s3 = '';
+  var sfps = '', sstat = '', sgenom = '';
   
-  s1 += 'r = ' + selfParams.get('r') + '<br>';
-  s1 += 'turn = ' + nturn + '<br>';
+  sfps += 'turn = ' + nturn + ' | ';
+  sfps += 'shown = ' + nshow + ' | ';
   
-  var ms = timerv / timern;
-  timerv = 0;  timern = 0;
-  s1 += 'fps = ' + round(1000 / ms) + '<br>';
+  // calc fps
+  var date1 = new Date;
+  var ms = (date1 - date0) / (nturn - nturn0);
+  date0 = date1;  nturn0 = nturn;
+  sfps += 'fps = ' + round(1000 / ms) + '<br>';
   
   if((paused || pausestat) && !force) {
-    
+    // paused
   }
   else {
     var x, y, z, idx, idx5, zidx, zidx5;
@@ -921,8 +872,8 @@ function Stats(force=false) {
         }
       }
     }
-    s2 += 'live cells = ' + ttl + '<br>';
-    s2 += 'genoms = ' + gcount + '<br>';
+    sstat += 'live cells = ' + ttl + ' | ';
+    sstat += 'genoms = ' + gcount + ' | ';
     
     // counting squares
     var nqempty = [];  // number of empty squares
@@ -962,14 +913,14 @@ function Stats(force=false) {
       tracked5[zidx5] = specstat5[z][idx5] ? specstat5[z][idx5] : 0;
     }
     
-    s3 += 'dominating genoms:<br>';
+    sgenom += 'dominating genoms:<br>';
     var trsorted = arsort_keys(tracked);
     for(var j in trsorted) {
       zidx = trsorted[j];
       z = zidx.substring(0, 1);  idx = zidx.substring(3);
       
       var clr = Color4Bits(Bits4Genom(Genom4Idx(idx)));
-      s3 +=
+      sgenom +=
         '<span style="color:rgb('+clr.r+','+clr.g+','+clr.b+'); background:#000;">' + z + ':' + idx + '</span>'
         + ' = ' + tracked[zidx]
         + ' = ' + (ttl ? round(tracked[zidx]/ttl*100) : '-') + '%'
@@ -1015,7 +966,6 @@ function Stats(force=false) {
     
     // empty or full or frozen planes
     var interesting_z = 0;  // number of planes that are not full and not dead and not frozen
-    var nonfrozen_z = 0;  // number of nonfrozen planes
     for(z=0; z<FD; z++) {
       var spread = 100 * nqempty[z] / maxqx / maxqy;
       var st = round(spread) + '%';
@@ -1026,42 +976,24 @@ function Stats(force=false) {
       
       if(frozentime[z]>0) st += ' frozen = <span style="background:#ff0;">' + frozentime[z] + '</span>';
       
-      s2 += 'nqempty[' + z + '] = ' + nqempty[z] + ' (' + st + ')<br>';
+      sstat += 'nqempty[' + z + '] = ' + nqempty[z] + ' (' + st + ')' + ' | ';
     }
     
     // if no interesting planes left - restart
     if(!interesting_z && nturn>1000 && nturn<10000) {
-      if(mode=='random') {
-        RandomRules();
-        Start();
+      if(ruleset=='random') {
+        Rules = RandomRules();
+        Init();
       }
       else {
-        paused = 1;
+        //paused = 1;
       }
     }
   }
   
-  if(s1) document.getElementById('stxt1').innerHTML = s1;
-  if(s2) document.getElementById('stxt2').innerHTML = s2;
-  if(s3) document.getElementById('stxt3').innerHTML = s3;
+  if(sfps) document.getElementById('stxtfps').innerHTML = sfps;
+  if(sstat) document.getElementById('stxtstat').innerHTML = sstat;
+  if(sgenom) document.getElementById('stxtgenom').innerHTML = sgenom;
   
   if(!paused) setTimeout(Stats, 1000);
-}
-
-function CalcWorld() {
-  if(paused) return 0;
-
-  Calc();
-
-  Show();  //if(!(nturn % 10)) 
-  
-  nturn ++;
-  
-  // calc fps
-  var date1 = new Date;
-  var timer = date1 - date0;  date0 = date1;
-  timerv += timer;  timern ++;
-  
-  if(maxfps) setTimeout(CalcWorld, 1000 / maxfps);
-  else       requestAnimationFrame(CalcWorld);
 }
