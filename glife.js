@@ -615,7 +615,7 @@ function resizeCanvasToDisplaySize(canvas) {
 }
 
 // stats canvas
-scnv_height = 150;
+scnv_height = 100;
 scnvs = sctxs = [];
 sdiv = document.getElementById('statcanvas');
 sdiv.innerHTML = 'species population (log scale):<br>';
@@ -778,10 +778,12 @@ function Init() {
   nturn0 = 0;
   nshow = 0;
   date0 = new Date;
+  ttl0 = 0;
+  saved = false;
   
   tracked = [], tracked5 = [];
   prevpoints = [], infostep = -1;
-  frozentime = [];  for(z=0; z<FD; z++) frozentime[z] = 0;
+  frozentime = [];  icehsh0 = [];  for(z=0; z<FD; z++) { frozentime[z] = 0;  icehsh0[z] = 0; }
   
   T0 = 0;  T1 = 1;
   
@@ -864,6 +866,37 @@ function Show() {
   if(maxfps>60 && !showiter) requestAnimationFrame(Show);  // overwise Show() is called in Calc()
 }
 
+function SaveRules(failed_at='') {
+  var q = '';
+  
+  var s = '';
+  for(z in Rules) {
+    var t = '';
+    for(v in Rules[z]) {
+      t += (t ? ',' : '') + '' + Rules[z][v] + '';
+    }
+    s += '[' + t + '],';
+  }
+  s = '[' + s + ']';
+  q += (q?'&':'') + 'rules=' + encodeURIComponent(s);
+  
+  q += (q?'&':'') + 'seed=' + encodeURIComponent(seed);
+  
+  q += (q?'&':'') + 'failed_at=' + encodeURIComponent(failed_at);
+  
+  q += (q?'&':'') + 'failed_nturn=' + encodeURIComponent(nturn);
+  
+  var xhr = new XMLHttpRequest();
+  xhr.open('POST', '/alife/glife/gl_save.php');
+  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+  xhr.onload = function() {
+    if(xhr.status==200) { if(xhr.responseText) alert(xhr.responseText); }
+  };
+  xhr.send(q);  // encodeURIComponent
+  
+  saved = true;
+}
+
 function Stats(force=false) {
   var sfps = '', sstat = '', sgenom = '';
   
@@ -892,15 +925,17 @@ function Stats(force=false) {
     var specstat = [];  // precise stat for top-genom list
     var specstat5 = [];  // rounded stat for graph
     
-    var qd=10, qx, qy, qq = []; // grid of squares qd*qd with coordinates (qx,qy) is to measure how species spread
+    var qd = 10, qx, qy, qq = []; // grid of squares qd*qd with coordinates (qx,qy) is to measure how species spread
     var maxqx = floor(FW / qd), maxqy = floor(FH / qd);
+    
+    var icehsh = [];
     
     for(var z=0; z<FD; z++) {
       
       gl.readBuffer(gl.COLOR_ATTACHMENT0 + z);
       gl.readPixels(0, 0, FW, FH, gldata_Format, gldata_Type, F);  // reading pixels of layer=z to F(z=0) part of F
       
-      specstat[z] = [];  specstat5[z] = [];  qq[z] = [];
+      specstat[z] = [];  specstat5[z] = [];  qq[z] = [];  icehsh[z] = 0;
       
       for(var x=0; x<FW; x++) {
         qx = floor(x / qd);
@@ -920,11 +955,13 @@ function Stats(force=false) {
           qy = floor(y / qd);
           if(!qq[z][qx][qy]) qq[z][qx][qy] = 0;
           qq[z][qx][qy] ++;  // each element of qq stores number of living cells in this square
+          
+          icehsh[z] += (x + y);  // hash-like sum of living cells
         }
       }
     }
     sstat += 'live cells = ' + ttl + ' | ';
-    sstat += 'genoms = ' + gcount + ' | ';
+    sstat += 'genoms = ' + gcount + '<br>';
     
     // counting squares
     var nqempty = [];  // number of empty squares
@@ -978,9 +1015,6 @@ function Stats(force=false) {
         + '<br>';
     }
     
-    nonfrozen = [];
-    for(z=0; z<FD; z++) nonfrozen[z] = 0;
-    
     // plotting graphs
     if(infostep<zoom*FW) {
       for(zidx5 in tracked5) {
@@ -1003,47 +1037,61 @@ function Stats(force=false) {
           sctxs[z].fillRect(xx, yy, 1, 1);
         }
         
-        if(prevpoints[zidx5]!=yy) nonfrozen[z] ++;
-        
         prevpoints[zidx5] = yy;
       }
     }
     
     // for how long planes are frozen
     for(z=0; z<FD; z++) {
-      if(!nonfrozen[z]) frozentime[z] ++;
-      else              frozentime[z] = 0;
+      if(!icehsh[z] || !ttl) frozentime[z] += 10;
+      else if((Math.abs(icehsh[z] - icehsh0[z]) / icehsh[z] < 0.01 && Math.abs(ttl - ttl0) / ttl < 0.01)) frozentime[z] ++;
+      else frozentime[z] = 0;
+      icehsh0[z] = icehsh[z];
     }
+    ttl0 = ttl;
     
     // empty or full or frozen planes
     var interesting_z = 0;  // number of planes that are not full and not dead and not frozen
+    var reason = '';  // reason why failed
     for(z=0; z<FD; z++) {
-      var spread = 100 * nqempty[z] / maxqx / maxqy;
+      var spread = 100 * (1 - nqempty[z] / maxqx / maxqy);
       var st = round(spread) + '%';
-           if(spread>90) st = '<span style="background:#d00;">' + st + '</span>';
-      else if(spread< 1) st = '<span style="background:#777;">' + st + '</span>';
-      else if(frozentime[z]>=10) st = st;
+      var clr1 = '';
+           if(spread<5)  clr1 = 'd00';
+      else if(spread<10) clr1 = 'ff0';
+      else if(spread>99) clr1 = '777';
+      else if(spread>95) clr1 = 'ccc';
+      if(clr1) st = '<span style="background:#' + clr1 + ';">' + st + '</span>';
+      
+      var clr2 = '';
+           if(frozentime[z]>2) clr2 = 'D00';
+      else if(frozentime[z]>0) clr2 = 'FF0';
+      if(clr2) st += ' frozen = <span style="background:#' + clr2 + ';">' + frozentime[z] + '</span>';
+      
+      if(spread<5 || spread>99 || frozentime[z]>2) { reason += clr1 + clr2 + ';'; }
       else interesting_z ++;
       
-      if(frozentime[z]>0) st += ' frozen = <span style="background:#ff0;">' + frozentime[z] + '</span>';
-      
-      sstat += 'nqempty[' + z + '] = ' + nqempty[z] + ' (' + st + ')' + ' | ';
+      sstat += 'nqempty['+z+'] = ' + nqempty[z] + ', icehsh['+z+'] = ' + icehsh[z] + ' (' + st + ')' + '<br>';
     }
     
     // if no interesting planes left - restart
-    if(!interesting_z && nturn>1000 && nturn<10000) {
-      if(ruleset=='random') {
-        Rules = RandomRules();
-        Init();
-      }
-      else {
-        //paused = 1;
-      }
+    if(ruleset=='random'
+         && (
+              !interesting_z && nturn>500
+            )
+            ||
+            (
+              nturn>=5000
+            )
+    ) {
+      SaveRules(reason);
+      Rules = RandomRules();
+      Init();
     }
   }
   
-  if(sfps) document.getElementById('stxtfps').innerHTML = sfps;
-  if(sstat) document.getElementById('stxtstat').innerHTML = sstat;
+  if(sfps)   document.getElementById('stxtfps').innerHTML = sfps;
+  if(sstat)  document.getElementById('stxtstat').innerHTML = sstat;
   if(sgenom) document.getElementById('stxtgenom').innerHTML = sgenom;
   
   if(!paused) setTimeout(Stats, 1000);

@@ -6,7 +6,7 @@ $page->type = "page";
 
 $p = mysql_o("SELECT * FROM rr_pages WHERE typ='k' AND url='alife'");
 
-$ver = 208;
+$ver = 209;
 
 $rand = intval($_GET['seed']) ?: rand(1,getrandmax());
 
