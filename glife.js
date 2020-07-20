@@ -11,12 +11,14 @@ debug = urlParams.get('debug') ? 1 : 0;
 paused = urlParams.get('paused') ? 1 : 0;
 pausestat = urlParams.get('pausestat') ? 1 : 0;
 maxfps = intval(urlParams.get('maxfps'));  // Calc framerate limit
-showiter = intval(urlParams.get('showiter'));  // Show once per showiter Calcs
+showiter = intval(urlParams.get('showiter'));  if(showiter<2) showiter = 0;  // Show once per showiter Calcs
 FW = 600;  if(urlParams.get('FW')>0) FW = intval(urlParams.get('FW'));
 FH = 350;  if(urlParams.get('FH')>0) FH = intval(urlParams.get('FH'));
 FD =   3;  if(urlParams.get('FD')>0) FD = intval(urlParams.get('FD'));
 ruleset = urlParams.get('ruleset');
 seed = intval(urlParams.get('seed') || selfParams.get('r'));
+LW = 1.0;  if(urlParams.get('LW')>0) LW = parseFloat(urlParams.get('LW'));  // initially filled piece width
+LH = 0.8;  if(urlParams.get('LH')>0) LH = parseFloat(urlParams.get('LH'));  // initially filled piece height
 
 if(debug) {
   paused = 1;  maxfps = 1;
@@ -204,7 +206,7 @@ var CalcFragmentShaderSource = `
   }
   
   void main() {
-    #define diealpha 128u;
+    #define diealpha 100u;  // opacity value for just-died cell
     
     fieldSize = textureSize(u_fieldtexture, 0);
     
@@ -288,7 +290,7 @@ var CalcFragmentShaderSource = `
       }
       
       if(!IsAlive(color)) {
-        if(color.a>30u) color.a = color.a * 9u / 10u;  // color decay for died cell
+        if(color.a>30u) color.a = color.a * 9u / 10u;  // alpha channel = color decay for died cell
         else            color.a = 0u;
       }
       
@@ -310,6 +312,7 @@ var ShowFragmentShaderSource = `
   
   uniform highp usampler3D u_fieldtexture;  // Field texture, UInt32
   uniform vec2 u_canvas;  // canvas width and height
+  uniform vec3 u_surface;  // surface: (left, top, zoom)
   
   in vec2 v_texcoord;  // the texCoords passed in from the vertex shader
   
@@ -332,10 +335,14 @@ var ShowFragmentShaderSource = `
       if((xy.y % 2) == 1) layer += 2;
     ` : ``) + `
     
-    ivec3 tex3coord = ivec3(v_texcoord, layer);
-    
-    uvec4 cell = texelFetch(u_fieldtexture, tex3coord, 0);
-    color = Color4Cell(cell);
+    ivec2 tex2coord = ivec2(v_texcoord / u_surface.z - u_surface.xy);
+    if(tex2coord.x<0 || tex2coord.y<0 || tex2coord.x>=fieldSize.x || tex2coord.y>=fieldSize.y) {
+      color = vec4(0.5, 0.5, 0.5, 1.);
+    }
+    else {
+      uvec4 cell = texelFetch(u_fieldtexture, ivec3(tex2coord, layer), 0);
+      color = Color4Cell(cell);
+    }
   }
 `;
 
@@ -498,15 +505,13 @@ function InitialFill() {
     return;
   }
   
-  var lx = 1.0, ly = 0.8;
-  
   for(var z=0; z<FD; z++) {
-    for(var x=round(FW/2-FW*lx/2); x<round(FW/2+FW*lx/2); x++) {
-      for(var y=round(FH/2-FH*ly/2); y<round(FH/2+FH*ly/2); y++) {
+    for(var x=round(FW/2-FW*LW/2); x<round(FW/2+FW*LW/2); x++) {
+      for(var y=round(FH/2-FH*LH/2); y<round(FH/2+FH*LH/2); y++) {
         if(z>=2 && y<FH/2) continue; // not too much predators
-        var density = round((1 - Math.abs(2*y/FH-1)/ly)*10);
+        var density = round((1 - Math.abs(2*y/FH-1)/LH)*10);
         if(rnd(0,10)<density) {
-          var r = floor(Rules[z].length * (x-round(FW/2-FW*lx/2)) / FW / lx);
+          var r = floor(Rules[z].length * (x-round(FW/2-FW*LW/2)) / FW / LW);
           InitSetCell(x, y, z, r);
         }
       }
@@ -587,6 +592,7 @@ ShowProgram.location = {};
 ShowProgram.location.a_position     = gl.getAttribLocation( ShowProgram, "a_position");
 ShowProgram.location.u_fieldtexture = gl.getUniformLocation(ShowProgram, "u_fieldtexture");
 ShowProgram.location.u_canvas       = gl.getUniformLocation(ShowProgram, "u_canvas");
+ShowProgram.location.u_surface      = gl.getUniformLocation(ShowProgram, "u_surface");
 
 // CANVAS SIZE ////////////////////////////////////////////////////////////////
 
@@ -595,7 +601,6 @@ var zoomx = Math.floor(0.9 * document.body.clientWidth  / FW);  if(zoomx<1) zoom
 var zoomy = Math.floor(0.9 * document.body.clientHeight / FH);  if(zoomy<1) zoomy = 1;
 zoom = Math.min(zoomx, zoomy);
 if(FD>1 && zoom<2) zoom = 2;  // for displaying 3D case we need at least 2*2 pixels for each cell
-FWzoom = FW * zoom;
 
 canvas.width  = zoom * FW;  canvas.style.width  = canvas.width  + 'px';
 canvas.height = zoom * FH;  canvas.style.height = canvas.height + 'px';
@@ -623,12 +628,25 @@ for(var z=0; z<FD; z++) {
   sctxs[z] = scnvs[z].getContext('2d');
 }
 
+class Surface {
+  constructor() {
+    this.zoom = 1;
+    this.left = 0;
+    this.top = 0;
+  }
+}
+surface = new Surface();
+
 // HTML TOP FORM ////////////////////////////////////////////////////////////////
 
+topbar  = document.getElementById('topbar');
+topform = document.getElementById('topform');
+
 function CreateTopForm() {
-  topform = document.getElementById('topform');
+  
   var ret = '', sp = ' &nbsp; ';
-  ret += sp;
+  
+  ret += '<input type=submit value=" OK " style="float:right; height:42px;">';
   
   var s = '';  for(var t=1; t<=4; t++) s += '<option value="' + t + '" ' + (t==FD?'selected':'') + '>' + t;
   ret += '<span title="Field Depth">FD=</span><select name="FD" id="FDsel">' + s + '</select>' + sp;
@@ -641,15 +659,47 @@ function CreateTopForm() {
   var onchange = `if(this.value!='random') document.getElementById('FDsel').value = NamedRules[this.value].length`;
   ret += '<span title="NamedRules">Rule=</span><select name="ruleset" onchange="' + onchange + '">' + s + '</select>' + sp;
   
-  ret += '<span title="0 = requestAnimationFrame, 1000 = no setTimeout">maxfps=</span><input type=text name="maxfps" value="' + maxfps + '" size=4>' + sp;
-  
   ret += '<span title="">seed=</span><input type=text name="seed" value="' + seed + '" size=10>' + sp;
   
-  ret += '<input type=submit value=" OK ">';
+  ret += '<br>';
+  
+  ret += '<span title="initially filled piece width">LW=</span><input type=text name="LW" value="' + LW + '" size=3>' + sp;
+  
+  ret += '<span title="initially filled piece height">LH=</span><input type=text name="LH" value="' + LH + '" size=3>' + sp;
+  
+  ret += '<span title="0 = requestAnimationFrame, 1000 = no setTimeout">maxfps=</span><input type=text name="maxfps" value="' + maxfps + '" size=4>' + sp;
+  
+  ret += '<span title="Show once per showiter Calcs">showiter=</span><input type=text name="showiter" value="' + showiter + '" size=3>' + sp;
+  
+  ret += '<span title="paused at start">paused=</span><input type=checkbox name="paused" ' + (paused ? 'checked' : '') + '>' + sp;
   
   return ret;
 }
 topform.innerHTML += CreateTopForm();
+
+function CreateNavButtons() {
+  var ret = '';
+  
+  ret += `
+    <input type=button id='pausebtn' value='` + (paused ? `unpause` : `pause`) + `' onclick='Pause();' autofocus>
+    <input type=button id='pausestatbtn' value='` + (pausestat ? `unpause stats` : `pause stats`) + `' onclick='PauseStat();'>
+  `;
+  ret += '<br>';
+  ret += `
+    <input type=button value="&minus;" onclick="surface.left+=0.1*(FW/surface.zoom/2); surface.top +=0.1*(FH/surface.zoom/2); surface.zoom/=1.1; Show();">
+    <input type=button value="+"       onclick="surface.zoom*=1.1; surface.left-=0.1*(FW/surface.zoom/2); surface.top -=0.1*(FH/surface.zoom/2); Show();">
+    
+    <input type=button value="&larr;" onclick="surface.left-=10; Show();">
+    <input type=button value="&rarr;" onclick="surface.left+=10; Show();">
+    <input type=button value="&uarr;" onclick="surface.top +=10; Show();">
+    <input type=button value="&darr;" onclick="surface.top -=10; Show();">
+    
+    <input type=button value="&empty;" onclick="surface.left=0; surface.top=0; surface.zoom=1; Show();">
+  `;
+  
+  return ret;
+}
+topbar.innerHTML += CreateNavButtons();
 
 // VERTICES ////////////////////////////////////////////////////////////////
 
@@ -801,6 +851,7 @@ function Show() {
   gl.clear(gl.COLOR_BUFFER_BIT);
   
   gl.uniform2f(ShowProgram.location.u_canvas, gl.canvas.width, gl.canvas.height);
+  gl.uniform3f(ShowProgram.location.u_surface, surface.left, surface.top, surface.zoom);
   
   gl.activeTexture(gl.TEXTURE0 + T0);
   gl.bindTexture(gl.TEXTURE_3D, Textures[T0]);

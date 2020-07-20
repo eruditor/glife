@@ -31,16 +31,14 @@ $page->z .= "
 <div class=ztt>
   <style>
     CANVAS {vertical-align:top; background:#eee; cursor:crosshair; width:400px; height:100px;}
-    DIV.stxt {font:normal 11px/11px Lucida Console, Monaco, Monospace; margin-top:5px; overflow-x:auto; white-space:nowrap;}
-    DIV#statcanvas {overflow-x:visible; white-space:normal;}
+    DIV.stxt {font:normal 11px/11px Lucida Console, Monaco, Monospace; margin-top:5px; white-space:nowrap;}
+    DIV#statcanvas {white-space:normal;}
     #topbar {width:400px; text-align:left; padding:0 0 0 0;}
-    #topbar INPUT[type=button] {width:100px;}
+    #pausebtn, #pausestatbtn {width:100px;}
     #topform {float:right; font:normal 14px/17px Arial;}
   </style>
   
   <div id='topbar'>
-    <input type='button' id='pausebtn' value='".($_GET['paused']?"unpause":"pause")."' autofocus onclick='Pause()'>
-    <input type='button' id='pausestatbtn' value='pause stats' onclick='PauseStat()'>
     <form method=GET action='$_self' id='topform'></form>
   </div>
   
