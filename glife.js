@@ -643,7 +643,6 @@ topbar  = document.getElementById('topbar');
 topform = document.getElementById('topform');
 
 function CreateTopForm() {
-  
   var ret = '', sp = ' &nbsp; ';
   
   ret += '<input type=submit value=" OK " style="float:right; height:42px;">';
@@ -655,7 +654,7 @@ function CreateTopForm() {
   
   ret += '<span title="Field Height">FH=</span><input type=text name="FH" value="' + FH + '" size=4>' + sp;
   
-  var s = '';  for(var t in {'random':[], ...NamedRules}) s += '<option value="' + t + '" ' + (t==ruleset?'selected':'') + '>' + t;
+  var s = '';  for(var t in {'':[], 'random':[], ...NamedRules}) s += '<option value="' + t + '" ' + (t==ruleset?'selected':'') + '>' + t;
   var onchange = `if(this.value!='random') document.getElementById('FDsel').value = NamedRules[this.value].length`;
   ret += '<span title="NamedRules">Rule=</span><select name="ruleset" onchange="' + onchange + '">' + s + '</select>' + sp;
   
@@ -1077,11 +1076,9 @@ function Stats(force=false) {
     // if no interesting planes left - restart
     if(ruleset=='random'
          && (
-              !interesting_z && nturn>500
-            )
-            ||
-            (
-              nturn>=5000
+              (!interesting_z && nturn>500)
+              ||
+              (nturn>=5000)
             )
     ) {
       SaveRules(reason);
