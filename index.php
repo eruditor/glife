@@ -8,32 +8,48 @@ $p = mysql_o("SELECT * FROM rr_pages WHERE typ='k' AND url='alife'");
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-$ver = 210;
+$ver = 211;
 
 $otitle = "GLife";
+$h1 = "";
 $zabst = "
   Life game on WebGL2.
 ";
-$ztt = "
+$zzt = "
   ...
 ";
 $zpubd = "2020-06-08";
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
-if(isset($_GET['savedcat'])) {
-  $savedcat = MRES(SPCQA($_GET['savedcat']));
+if(isset($_GET['savedcat']) || isset($_GET['typed'])) {
+  $savedcat = $_GET['savedcat'];
+  $typed = $_GET['typed'];
   $goodness = intval($_GET['goodness']);
   
-  $stitle = "Category «".$savedcat."»";
-  $page->title = "Alife: $otitle: Saved Genoms: $stitle – ERUDITOR.RU";
-  $page->z .= "<h1><a href='/k/?alife'>Alife</a> &rarr; <a href='/alife/glife/'>$otitle</a> &rarr; <a href='$_self?savedlist=1'>Saved Genoms</a> &rarr; $stitle</h1>";
+  if(isset($_GET['typed'])) {
+    if($typed) {
+      $stitle = "Typed «".SPCQA($typed)."»";
+      $Q = "typed='".MRES($typed)."'";
+    }
+    else {
+      $stitle = "Named Un-Typed";
+      $Q = "typed='' AND named<>''";
+    }
+  }
+  else {
+    $stitle = "Category «".SPCQA($savedcat)."»";
+    $Q = "failed_at='".MRES($savedcat)."'";
+  }
   
-  $nturn4goodness = [1=>5000, 2=>1000, 3=>0];
+  $page->title = "Alife: $otitle: Saved Genoms: $stitle – ERUDITOR.RU";
+  $h1 = "<a href='/k/?alife'>Alife</a> &rarr; <a href='/alife/glife/'>$otitle</a> &rarr; <a href='$_self?savedlist=1'>Saved Genoms</a> &rarr; $stitle";
+  
   $s = '';
+  $nturn4goodness = [1=>5000, 2=>1000, 3=>0];
   $res = mysql_query(
    "SELECT *
     FROM rr_glifes
-    WHERE failed_at='$savedcat'
+    WHERE $Q
       ".($goodness ? "AND failed_nturn>=".intval($nturn4goodness[$goodness]) : "")."
     ORDER BY found_dt DESC
   ");
@@ -42,33 +58,56 @@ if(isset($_GET['savedcat'])) {
       <tr>
         <td>$r->id</td>
         <td><a href='$_self?ruleset=$r->rules&pausestat=1'>$r->rules</a></td>
+        <td><i>$r->named</i></td>
+        <td>$r->typed</td>
         <td>$r->found_dt</td>
         <td>$r->failed_at</td>
         <td>$r->failed_nturn</td>
+        ".(_local==="1" ? "
+          <td>
+            <input type=text id='glrule$r->id' value='".SPCQA($r->named . ($r->typed?":$r->typed":""))."' size=24><input type=button value=' Save ' onclick='XHRsave(`id=$r->id&named=`+encodeURIComponent(document.getElementById(`glrule$r->id`).value));'>
+          </td>
+        " : "")."
       </tr>
     ";
   }
-  $page->z .= "
-  <div class=ztt>
+  $zzt = "
     <style>
       #SavedListTB TD, #SavedListTB TH {font:normal 11px/13px arial; padding:1px 3px; vertical-align:top;}
       #SavedListTB TH {text-align:left; font-weight:bold;}
+      #SavedListTB TD INPUT {font:normal 11px/11px arial; padding:0;}
     </style>
     <table cellspacing=0 id='SavedListTB'>
-      <tr><th>id</th><th>genom</th><th>datetime</th><th>category</th><th>nturn</th></tr>
+      <tr><th>id</th><th>genom</th><th>named</th><th>typed</th><th>datetime</th><th>category</th><th>nturn</th></tr>
       $s
     </table>
-  </div>
   ";
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 elseif($_GET['savedlist']) {
   $stitle = "Saved Genoms: Category List";
   $page->title = "Alife: $otitle: $stitle – ERUDITOR.RU";
-  $page->z .= "<h1><a href='/k/?alife'>Alife</a> &rarr; <a href='/alife/glife/'>$otitle</a> &rarr; $stitle</h1>";
+  $h1 = "<a href='/k/?alife'>Alife</a> &rarr; <a href='/alife/glife/'>$otitle</a> &rarr; $stitle";
   
   $s = '';  $ss = [];
-  $clr4cat = [1=>"8f8", 2=>"ff8", 3=>"f88"];
+  $clr4cat = [0=>"4ff", 1=>"8f8", 2=>"ff8", 3=>"f88"];
+  
+  $res = mysql_query(
+   "SELECT typed, COUNT(*) nn
+    FROM rr_glifes
+    WHERE named<>'' OR typed<>''
+    GROUP BY typed
+    ORDER BY nn DESC
+  ");
+  while($r = mysql_fetch_object($res)) {
+    $ss[0] .= "
+      <tr>
+       <td><a href='$_self?typed=$r->typed'>".($r->typed?:"-?-")."</a></td>
+       <td align=right>$r->nn</td>
+      </tr>
+    ";
+  }
+  
   $res = mysql_query(
    "SELECT failed_at, IF(failed_nturn>=5000, 1, IF(failed_nturn>=1000, 2, 3)) goodness, COUNT(*) nn
     FROM rr_glifes
@@ -84,20 +123,28 @@ elseif($_GET['savedlist']) {
       </tr>
     ";
   }
-  for($goodness=1; $goodness<=3; $goodness++) {
+  
+  for($goodness=0; $goodness<=3; $goodness++) {
+    if($goodness==0) {
+      $th1 = "manually selected";
+      $th2 = "type";
+    }
+    else {
+      $th1 = "goodness = $goodness";
+      $th2 = "category";
+    }
     $s .= "
-      <td>
-        <div style='background:#".$clr4cat[$goodness].";'>goodness = $goodness</div>
-        <table cellspacing=0>
-          <tr><th>category</th><th>genoms</th></tr>
+      <td width=20%>
+        <table cellspacing=0 width=100%>
+          <tr><th colspan=2 style='background:#".$clr4cat[$goodness].";'>$th1</th></tr>
+          <tr><th>$th2</th><th style='text-align:right;'>genoms</th></tr>
           ".$ss[$goodness]."
         </table>
       </td>
-      <td width=30>&nbsp;</td>
+      <td width=5%>&nbsp;</td>
     ";
   }
-  $page->z .= "
-  <div class=ztt>
+  $zzt = "
     <style>
       #SavedListTB TD, #SavedListTB TH {font:normal 11px/13px arial; padding:1px 3px; vertical-align:top;}
       #SavedListTB TH {text-align:left; font-weight:bold;}
@@ -105,7 +152,6 @@ elseif($_GET['savedlist']) {
     <table cellspacing=0 id='SavedListTB'><tr>
       $s
     </tr></table>
-  </div>
   ";
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -113,19 +159,14 @@ else {
   $rand = intval($_GET['seed']) ?: rand(1,getrandmax());
   
   $stitle = $_GET['ruleset'] ? ": ".SPCQA($_GET['ruleset']) : "";
-
-  $page->title = "Alife: $otitle – ERUDITOR.RU";
-
-  $page->z .= "<h1><a href='/k/?alife'>Alife</a> &rarr; $otitle <span>v".sprintf("%.2lf", $ver/100)."</span> $stitle</h1>";
   
-  $page->z .= "
-  <div class=zabst>
-    $zabst
-  </div>
-
-  <div class=ztt>
-    &rarr; <a href='$_self?savedlist=1'>List of Genoms found in random-search</a>
-    
+  $page->title = "Alife: $otitle – ERUDITOR.RU";
+  
+  $h1 = "<a href='/k/?alife'>Alife</a> &rarr; $otitle <span>v".sprintf("%.2lf", $ver/100)."</span> $stitle";
+  
+  $zzt = "
+    &rarr; <a href='$_self?savedlist=1'>Database of Genoms found in random-search</a>
+      
     <style>
       CANVAS {vertical-align:top; background:#eee; cursor:crosshair; width:400px; height:100px;}
       DIV.stxt {font:normal 11px/11px Lucida Console, Monaco, Monospace; margin-top:5px; white-space:nowrap;}
@@ -147,19 +188,26 @@ else {
     <div id='stxtgenom'  class='stxt'></div>
     <div id='stxtlog'    class='stxt'></div>
     
-    $ztt
-    
-  </div>
-
-  <div class=zauth><span title='Àâòîð'>&copy; </span>".GetAuthorName($p->author)."</div>
-
-  <div class=zpubd>$zpubd</div>
-
-  <script src='lib/rules.js?v=$ver&r=$rand'></script>
-  <script src='glife.js?v=$ver&r=$rand'></script>
-
+    <script src='lib/rules.js?v=$ver&r=$rand'></script>
+    <script src='glife.js?v=$ver&r=$rand'></script>
   ";
 }
+
+$page->z .= "
+  <h1>$h1</h1>
+  
+  <div class=zabst>
+    $zabst
+  </div>
+  
+  <div class=zzt>
+    $zzt
+  </div>
+  
+  <div class=zauth><span title='Àâòîð'>&copy; </span>".GetAuthorName($p->author)."</div>
+  
+  <div class=zpubd>$zpubd</div>
+";
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 

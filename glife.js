@@ -656,7 +656,7 @@ function CreateTopForm() {
   
   var s = '';  for(var t in {'':[], 'random':[], ...NamedRules}) s += '<option value="' + t + '" ' + (t==ruleset?'selected':'') + '>' + t;
   var onchange = `if(this.value!='random') document.getElementById('FDsel').value = NamedRules[this.value].length`;
-  ret += '<span title="NamedRules">Rule=</span><select name="ruleset" onchange="' + onchange + '">' + s + '</select>' + sp;
+  ret += '<span title="NamedRules">Genom=</span><select name="ruleset" onchange="' + onchange + '">' + s + '</select>' + sp;
   
   ret += '<span title="">seed=</span><input type=text name="seed" value="' + seed + '" size=10>' + sp;
   
@@ -885,13 +885,7 @@ function SaveRules(failed_at='') {
   
   q += (q?'&':'') + 'failed_nturn=' + encodeURIComponent(nturn);
   
-  var xhr = new XMLHttpRequest();
-  xhr.open('POST', '/alife/glife/gl_save.php');
-  xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-  xhr.onload = function() {
-    if(xhr.status==200) { if(xhr.responseText) alert(xhr.responseText); }
-  };
-  xhr.send(q);  // encodeURIComponent
+  XHRsave(q);
   
   saved = true;
 }
