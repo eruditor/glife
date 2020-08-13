@@ -5,17 +5,40 @@ include(_root . "lib/db.php");
 include(_root . "lib/lib.php");
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 if($_POST['rules']) {
+  $gl = mysql_o("SELECT * FROM rr_glifes WHERE rules='".MRES($_POST['rules'])."'");
+  if(!$gl) {
+    $q = '';
+    $post = ['rules'=>'', 'failed_at'=>'', 'failed_nturn'=>0, 'records'=>''];
+    foreach($post as $k=>$v) {
+      $post[$k] = MRES($_POST[$k]);
+      $q .= ($q?", ":"") . "$k='".$post[$k]."'";
+    }
+    mysql_query("INSERT INTO rr_glifes SET found_dt=NOW(), $q");
+    $glid = mysql_insert_id();
+  }
+  else {
+    $glid = $gl->id;
+  }
+  
   $q = '';
-  $post = ['rules'=>'', 'named'=>'', 'typed'=>'', 'seed'=>'', 'failed_at'=>'', 'failed_nturn'=>0];
+  $post = ['seed'=>'', 'failed_at'=>'', 'failed_nturn'=>0, 'records'=>'', 'context'=>''];
   foreach($post as $k=>$v) {
     $post[$k] = MRES($_POST[$k]);
     $q .= ($q?", ":"") . "$k='".$post[$k]."'";
   }
-  mysql_query("INSERT INTO rr_glifes SET found_dt=NOW(), $q");
+  mysql_query("INSERT INTO rr_gliferuns SET gl_id='$glid', found_dt=NOW(), $q");
   $id = mysql_insert_id();
-  mysql_query("INSERT INTO rr_glogs SET glife_id='$id', usr_id=0, dt=NOW(), val0='', val1='".MRES($q)."'");
+  mysql_query("INSERT INTO rr_glogs SET glife_id='$glid', usr_id=0, dt=NOW(), val0='', val1='".MRES($q)."'");
+  
+  if($gl) {
+    include_once("lib/service.php");
+    $gls = gl_AvgRuns($gl, true);
+  }
 }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 else if(_local==="1" && $_POST['named']) {
   $id = intval($_POST['id']);
   $old = mysql_o("SELECT * FROM rr_glifes WHERE id='$id'");  if(!$old) die("glife $id not found");
@@ -32,5 +55,6 @@ else if(_local==="1" && $_POST['named']) {
     mysql_query("INSERT INTO rr_glogs SET glife_id='$id', usr_id=0, dt=NOW(), val0='".MRES($val0)."', val1='".MRES($q)."'");
   }
 }
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 ?>

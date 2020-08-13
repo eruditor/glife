@@ -15,7 +15,8 @@ showiter = intval(urlParams.get('showiter'));  if(showiter<2) showiter = 0;  // 
 FW = 600;  if(urlParams.get('FW')>0) FW = intval(urlParams.get('FW'));
 FH = 350;  if(urlParams.get('FH')>0) FH = intval(urlParams.get('FH'));
 FD =   3;  if(urlParams.get('FD')>0) FD = intval(urlParams.get('FD'));
-ruleset = urlParams.get('ruleset');
+ruleset = urlParams.get('ruleset') || selfParams.get('ruleset');
+rerun = urlParams.get('rerun') || selfParams.get('rerun');
 seed = intval(urlParams.get('seed') || selfParams.get('r'));
 LW = 1.0;  if(urlParams.get('LW')>0) LW = parseFloat(urlParams.get('LW'));  // initially filled piece width
 LH = 0.8;  if(urlParams.get('LH')>0) LH = parseFloat(urlParams.get('LH'));  // initially filled piece height
@@ -36,6 +37,7 @@ if(!ruleset) {
 function intval(x) { if(!x) return 0;  return parseInt(x, 10); }
 function floor(x) { return Math.floor(x); }
 function round(x) { return Math.round(x); }
+function sgn(x) { return x > 0 ? 1 : (x < 0 ? -1 : 0); }
 
 function arsort_keys(obj) {
   var keys = Object.keys(obj);
@@ -770,21 +772,71 @@ Framebuffers = new Array(2);
 Framebuffers[0] = CreateFramebuffer(Textures[0]);
 Framebuffers[1] = CreateFramebuffer(Textures[1]);
 
-// RENDERING ////////////////////////////////////////////////////////////////
+// MAIN ////////////////////////////////////////////////////////////////
+
+nGen = 1;  // number of genoms generated in random-search
+
+class Record {
+  constructor() {
+    this.ttl = 0;  // total number of living cells
+    this.gcount = 0;  // number of different genoms in the biosphere
+    
+    this.livecells = [];  // total number of living cells in this z-plane
+    this.icehsh = [];  // quasi-sum of living cell coordinates, to detect frozen states
+    this.frozentime = [];  // for how many turns this z-plane is frozen
+
+    this.nqfilld = [];  // total number of non-empty squares
+    this.nqchngd = [];  // number of squared that changed their emptiness
+    
+    this.fillin = [];
+    this.spread = [];
+    this.variat = [];
+    
+    this.zero();
+  }
+
+  zero() {
+    for(let key in this) {
+      if(Array.isArray(this[key])) {
+        for(let z=0; z<FD; z++) this[key][z] = 0;
+      }
+      else if(Number.isInteger(this[key])) {
+        this[key] = 0;
+      }
+    }
+  }
+}
+
+class Records {  // tracking and writing to DB population characteristics
+  constructor() {
+    this[0] = new Record();  // storing it for SO (previous)
+    this[1] = new Record();  // and S1 (current) turns
+  }
+  
+  delta(field, z) {
+    return 2 * (this[S1][field][z] - this[S0][field][z]) / (this[S1][field][z] + this[S0][field][z]);
+  }
+  
+  absdelta(field, z) {
+    return Math.abs(this.delta(field, z));
+  }
+}
 
 function Init() {
   nturn = 0;
   nturn0 = 0;
   nshow = 0;
   date0 = new Date;
-  ttl0 = 0;
   saved = false;
+  qq0 = [];
+  
+  rec = new Records();  
   
   tracked = [], tracked5 = [];
   prevpoints = [], infostep = -1;
-  frozentime = [];  icehsh0 = [];  for(z=0; z<FD; z++) { frozentime[z] = 0;  icehsh0[z] = 0; }
   
-  T0 = 0;  T1 = 1;
+  T0 = 0;  T1 = 1;  // time moments for Calc
+  S0 = 0;  S1 = 1;  // time moments for Stats
   
   InitialFill();
   
@@ -833,6 +885,8 @@ function Calc() {
   if(showiter) { if(nturn % showiter == 0) Show(); }
   else if(maxfps<=60) Show();
   // else Show() rotates in its own cycle
+
+  if((nturn % 200)==0) Stats();
   
   if(maxfps>=1000) Calc();
   else if(maxfps)  setTimeout(Calc, 1000 / maxfps);
@@ -885,205 +939,245 @@ function SaveRules(failed_at='') {
   
   q += (q?'&':'') + 'failed_nturn=' + encodeURIComponent(nturn);
   
+  srec = JSON.stringify(rec[S1]);
+  q += (q?'&':'') + 'records=' + encodeURIComponent(srec);
+  
+  scon = window.location.search;
+  q += (q?'&':'') + 'context=' + encodeURIComponent(scon);
+  
   XHRsave(q);
   
   saved = true;
 }
 
 function Stats(force=false) {
-  var sfps = '', sstat = '', sgenom = '';
+  // calc fps
+  var sfps = '';
   
   sfps += 'turn = ' + nturn + ' | ';
   sfps += 'shown = ' + nshow + ' | ';
   
-  // calc fps
   var date1 = new Date;
   var ms = (date1 - date0) / (nturn - nturn0);
   date0 = date1;  nturn0 = nturn;
   sfps += 'fps = ' + round(1000 / ms) + '<br>';
+  if(nGen>1) sfps = 'nGen = ' + nGen + ' | ' + sfps;
   
-  if((paused || pausestat) && !force) {
-    // paused
+  if(sfps) document.getElementById('stxtfps').innerHTML = sfps;
+  
+  if(!force && (paused || pausestat)) return;
+  
+  // calc stats and genom list
+  
+  var sstat = '', sgenom = '';
+  
+  var x, y, z, idx, idx5, zidx, zidx5;
+  
+  var specstat = [];  // precise stat for top-genom list
+  var specstat5 = [];  // rounded stat for graph
+  
+  var qd = 10, qx, qy, qq = []; // grid of squares qd*qd with coordinates (qx,qy) is to measure how species spread
+  var qw = floor(FW / qd), qh = floor(FH / qd);  // assuming FW%qd==0 && FH%qd==0
+  var nqtotal = qw * qh;  // total number of squares
+  
+  rec[S1].zero();
+  
+  gl.bindFramebuffer(gl.FRAMEBUFFER, Framebuffers[T0]);  // preparing to fetch Field data from GPU
+  
+  for(var z=0; z<FD; z++) {
+    
+    gl.readBuffer(gl.COLOR_ATTACHMENT0 + z);  // z-plane of the Field is a buffer attached to a texture point
+    gl.readPixels(0, 0, FW, FH, gldata_Format, gldata_Type, F);  // reading pixels of layer=z to F(z=0) part of F
+    
+    specstat[z] = [];  specstat5[z] = [];  qq[z] = [];
+    
+    for(var x=0; x<FW; x++) {
+      qx = floor(x / qd);
+      if(!qq[z][qx]) qq[z][qx] = [];
+      for(var y=0; y<FH; y++) {
+        var cell = GetCell(x, y, 0);
+        if(cell.a<255) continue;  // dead cell
+        
+        var bits = {'iborn': cell.r, 'isurv': cell.g};
+        idx = Idx4Genom(Genom4Bits(bits));
+        idx5 = Idx54Idx(idx);
+        if(!specstat[z][idx]) { specstat[z][idx] = 0;  specstat5[z][idx5] = 0;  rec[S1].gcount ++; }
+        specstat[z][idx] ++;
+        specstat5[z][idx5] ++;
+        rec[S1].ttl ++;
+
+        rec[S1].livecells[z] ++;
+        
+        qy = floor(y / qd);
+        if(!qq[z][qx][qy]) qq[z][qx][qy] = 0;
+        qq[z][qx][qy] ++;  // each element of qq stores number of living cells in this square
+        
+        rec[S1].icehsh[z] += (x + y);  // hash-like sum of living cells
+      }
+    }
   }
-  else {
-    var x, y, z, idx, idx5, zidx, zidx5;
-    
-    infostep ++;
-    
-    gl.bindFramebuffer(gl.FRAMEBUFFER, Framebuffers[T0]);
-    
-    var ttl = 0;  // total number of living cells
-    var gcount = 0;  // number of different genoms if the biosphere
-    
-    var specstat = [];  // precise stat for top-genom list
-    var specstat5 = [];  // rounded stat for graph
-    
-    var qd = 10, qx, qy, qq = []; // grid of squares qd*qd with coordinates (qx,qy) is to measure how species spread
-    var maxqx = floor(FW / qd), maxqy = floor(FH / qd);
-    
-    var icehsh = [];
-    
-    for(var z=0; z<FD; z++) {
-      
-      gl.readBuffer(gl.COLOR_ATTACHMENT0 + z);
-      gl.readPixels(0, 0, FW, FH, gldata_Format, gldata_Type, F);  // reading pixels of layer=z to F(z=0) part of F
-      
-      specstat[z] = [];  specstat5[z] = [];  qq[z] = [];  icehsh[z] = 0;
-      
-      for(var x=0; x<FW; x++) {
-        qx = floor(x / qd);
-        if(!qq[z][qx]) qq[z][qx] = [];
-        for(var y=0; y<FH; y++) {
-          var cell = GetCell(x, y, 0);
-          if(cell.a<255) continue;  // dead cell
-          
-          var bits = {'iborn': cell.r, 'isurv': cell.g};
-          idx = Idx4Genom(Genom4Bits(bits));
-          idx5 = Idx54Idx(idx);
-          if(!specstat[z][idx]) { specstat[z][idx] = 0;  specstat5[z][idx5] = 0;  gcount ++; }
-          specstat[z][idx] ++;
-          specstat5[z][idx5] ++;
-          ttl ++;
-          
-          qy = floor(y / qd);
-          if(!qq[z][qx][qy]) qq[z][qx][qy] = 0;
-          qq[z][qx][qy] ++;  // each element of qq stores number of living cells in this square
-          
-          icehsh[z] += (x + y);  // hash-like sum of living cells
-        }
+  sstat += 'live cells = ' + rec[S1].ttl + ' | ';
+  sstat += 'genoms = ' + rec[S1].gcount + '<br>';
+  
+  // counting squares
+  for(z=0; z<FD; z++) {
+    for(qx=0; qx<qw; qx++) {
+      for(qy=0; qy<qh; qy++) {
+        if(qq[z][qx][qy]) rec[S1].nqfilld[z] ++;
+        if(qq0.length && sgn(qq[z][qx][qy]) != sgn(qq0[z][qx][qy])) rec[S1].nqchngd[z] ++;
       }
     }
-    sstat += 'live cells = ' + ttl + ' | ';
-    sstat += 'genoms = ' + gcount + '<br>';
-    
-    // counting squares
-    var nqempty = [];  // number of empty squares
-    for(z=0; z<FD; z++) {
-      nqempty[z] = 0;
-      for(qx=0; qx<maxqx; qx++) {
-        for(qy=0; qy<maxqy; qy++) {
-          if(!qq[z][qx][qy]) nqempty[z] ++;
-        }
+  }
+  qq0 = [...qq];
+  
+  // tracking all species ever reached top-10 or filled 0.1% of field's area
+  for(z=0; z<FD; z++) {
+    var sorted = arsort_keys(specstat[z]);
+    var l = sorted.length, lmt = round(0.001*FW*FH);
+    for(i=0; i<l; i++) {
+      idx = sorted[i];  if(!idx) break;  if(!specstat[z][idx]) break;
+      if(i<10 || specstat[z][idx]>lmt) {
+        zidx = z + ': ' + idx;
+        tracked[zidx] = specstat[z][idx];
+        idx5 = Idx54Idx(idx);
+        zidx5 = z + ': ' + idx5;
+        tracked5[zidx5] = specstat5[z][idx5];
       }
+      else break;
     }
+  }
+  
+  // updating all tracked values
+  for(zidx in tracked) {
+    z = zidx.substring(0, 1);  idx = zidx.substring(3);
+    tracked[zidx] = specstat[z][idx] ? specstat[z][idx] : 0;
+  }
+  for(zidx5 in tracked5) {
+    z = zidx5.substring(0, 1);  idx5 = zidx5.substring(3);
+    tracked5[zidx5] = specstat5[z][idx5] ? specstat5[z][idx5] : 0;
+  }
+  
+  sgenom += 'dominating genoms:<br>';
+  var trsorted = arsort_keys(tracked);
+  for(var j in trsorted) {
+    zidx = trsorted[j];
+    z = zidx.substring(0, 1);  idx = zidx.substring(3);
     
-    // tracking all species ever reached top-10 or filled 0.1% of field's area
-    for(z=0; z<FD; z++) {
-      var sorted = arsort_keys(specstat[z]);
-      var l = sorted.length, lmt = round(0.001*FW*FH);
-      for(i=0; i<l; i++) {
-        idx = sorted[i];  if(!idx) break;  if(!specstat[z][idx]) break;
-        if(i<10 || specstat[z][idx]>lmt) {
-          zidx = z + ': ' + idx;
-          tracked[zidx] = specstat[z][idx];
-          idx5 = Idx54Idx(idx);
-          zidx5 = z + ': ' + idx5;
-          tracked5[zidx5] = specstat5[z][idx5];
-        }
-        else break;
-      }
-    }
-    
-    // updating all tracked values
-    for(zidx in tracked) {
-      z = zidx.substring(0, 1);  idx = zidx.substring(3);
-      tracked[zidx] = specstat[z][idx] ? specstat[z][idx] : 0;
-    }
+    var clr = Color4Bits(Bits4Genom(Genom4Idx(idx)));
+    sgenom +=
+      '<span style="color:rgb('+clr.r+','+clr.g+','+clr.b+'); background:#000;">' + z + ':' + idx + '</span>'
+      + ' = ' + tracked[zidx]
+      + ' = ' + (rec[S1].ttl ? round(tracked[zidx]/rec[S1].ttl*100) : '-') + '%'
+      + '<br>';
+  }
+  
+  // plotting graphs
+  infostep ++;
+  if(infostep<zoom*FW) {
     for(zidx5 in tracked5) {
       z = zidx5.substring(0, 1);  idx5 = zidx5.substring(3);
-      tracked5[zidx5] = specstat5[z][idx5] ? specstat5[z][idx5] : 0;
-    }
-    
-    sgenom += 'dominating genoms:<br>';
-    var trsorted = arsort_keys(tracked);
-    for(var j in trsorted) {
-      zidx = trsorted[j];
-      z = zidx.substring(0, 1);  idx = zidx.substring(3);
       
-      var clr = Color4Bits(Bits4Genom(Genom4Idx(idx)));
-      sgenom +=
-        '<span style="color:rgb('+clr.r+','+clr.g+','+clr.b+'); background:#000;">' + z + ':' + idx + '</span>'
-        + ' = ' + tracked[zidx]
-        + ' = ' + (ttl ? round(tracked[zidx]/ttl*100) : '-') + '%'
-        + '<br>';
-    }
-    
-    // plotting graphs
-    if(infostep<zoom*FW) {
-      for(zidx5 in tracked5) {
-        z = zidx5.substring(0, 1);  idx5 = zidx5.substring(3);
-        
-        var clr = Color4Bits(Bits4Genom(Genom4Idx(Idx4Idx5(idx5))));
-        
-        var xx = infostep;
-        var yy = scnv_height - round(Math.log2(tracked5[zidx5]) / Math.log2(FW*FH) * scnv_height); // Math.log2 or cbrt here
-        var style = 'rgb('+clr.r+','+clr.g+','+clr.b+')';
-        if(prevpoints[zidx5] && xx>0) {
-          sctxs[z].beginPath();
-          sctxs[z].strokeStyle = style;
-          sctxs[z].moveTo(xx-1, prevpoints[zidx5]);
-          sctxs[z].lineTo(xx, yy);
-          sctxs[z].stroke();
-        }
-        else {
-          sctxs[z].fillStyle = style;
-          sctxs[z].fillRect(xx, yy, 1, 1);
-        }
-        
-        prevpoints[zidx5] = yy;
+      var clr = Color4Bits(Bits4Genom(Genom4Idx(Idx4Idx5(idx5))));
+      
+      var xx = infostep;
+      var yy = scnv_height - round(Math.log2(tracked5[zidx5]) / Math.log2(FW*FH) * scnv_height); // Math.log2 or cbrt here
+      var style = 'rgb('+clr.r+','+clr.g+','+clr.b+')';
+      if(prevpoints[zidx5] && xx>0) {
+        sctxs[z].beginPath();
+        sctxs[z].strokeStyle = style;
+        sctxs[z].moveTo(xx-1, prevpoints[zidx5]);
+        sctxs[z].lineTo(xx, yy);
+        sctxs[z].stroke();
       }
-    }
-    
-    // for how long planes are frozen
-    for(z=0; z<FD; z++) {
-      if(!icehsh[z] || !ttl) frozentime[z] += 10;
-      else if((Math.abs(icehsh[z] - icehsh0[z]) / icehsh[z] < 0.01 && Math.abs(ttl - ttl0) / ttl < 0.01)) frozentime[z] ++;
-      else frozentime[z] = 0;
-      icehsh0[z] = icehsh[z];
-    }
-    ttl0 = ttl;
-    
-    // empty or full or frozen planes
-    var interesting_z = 0;  // number of planes that are not full and not dead and not frozen
-    var reason = '';  // reason why failed
-    for(z=0; z<FD; z++) {
-      var spread = 100 * (1 - nqempty[z] / maxqx / maxqy);
-      var st = round(spread) + '%';
-      var clr1 = '';
-           if(spread<5)  clr1 = 'd00';
-      else if(spread<10) clr1 = 'ff0';
-      else if(spread>99) clr1 = '777';
-      else if(spread>95) clr1 = 'ccc';
-      if(clr1) st = '<span style="background:#' + clr1 + ';">' + st + '</span>';
+      else {
+        sctxs[z].fillStyle = style;
+        sctxs[z].fillRect(xx, yy, 1, 1);
+      }
       
-      var clr2 = '';
-           if(frozentime[z]>2) clr2 = 'D00';
-      else if(frozentime[z]>0) clr2 = 'FF0';
-      if(clr2) st += ' frozen = <span style="background:#' + clr2 + ';">' + frozentime[z] + '</span>';
-      
-      if(spread<5 || spread>99 || frozentime[z]>2) { reason += clr1 + clr2 + ';'; }
-      else interesting_z ++;
-      
-      sstat += 'nqempty['+z+'] = ' + nqempty[z] + ', icehsh['+z+'] = ' + icehsh[z] + ' (' + st + ')' + '<br>';
+      prevpoints[zidx5] = yy;
     }
+  }
+  
+  // for how long planes are frozen
+  for(z=0; z<FD; z++) {
+    if(!rec[S1].ttl || !rec[S1].icehsh[z]) rec[S1].frozentime[z] = rec[S0].frozentime[z] + 10;
+    else if(rec.absdelta('icehsh', z) < 0.01 && rec.absdelta('livecells', z) < 0.01) rec[S1].frozentime[z] = rec[S0].frozentime[z] + 1;
+    else rec[S1].frozentime[z] = 0;
+  }
+  
+  // empty or full or frozen planes
+  var interesting_z = 0;  // number of planes that are not full and not dead and not frozen
+  var failed_at = '';  // reason why failed
+  var stb = '';  // table contents to output
+  for(z=0; z<FD; z++) {
+    var fillin = 100 * (rec[S1].livecells[z] / (FW*FH));  // percent of all cells alive
+    var spread = 100 * (rec[S1].nqfilld[z] / nqtotal);  // percent of filled (non-empty) squares
+    var variat = 100 * (rec[S1].nqchngd[z] / rec[S1].nqfilld[z]);  // percent of non-empty squares that changed their emptiness in the current turn
     
-    // if no interesting planes left - restart
-    if(ruleset=='random'
-         && (
-              (!interesting_z && nturn>500)
-              ||
-              (nturn>=5000)
-            )
-    ) {
-      SaveRules(reason);
+    var flags = '';
+    
+    var clr1 = '';
+         if(spread< 5) clr1 = 'd00';
+    else if(spread<10) clr1 = 'ff0';
+    else if(spread>99) clr1 = '777';
+    else if(spread>95) clr1 = 'ccc';
+    if(clr1) flags = '<span style="background:#' + clr1 + ';">' + round(spread) + '%</span> ';
+    
+    var clr2 = '';
+         if(rec[S1].frozentime[z]>2) clr2 = 'D00';
+    else if(rec[S1].frozentime[z]>0) clr2 = 'FF0';
+    if(clr2) flags += '<span style="background:#' + clr2 + ';">frozen=' + rec[S1].frozentime[z] + '</span> ';
+    
+    if(spread<5 || spread>99 || rec[S1].frozentime[z]>2) { failed_at += clr1 + clr2 + ';'; }
+    else interesting_z ++;
+    
+    rec[S1].fillin[z] = fillin;
+    rec[S1].spread[z] = spread;
+    rec[S1].variat[z] = variat;
+    
+    stb += `
+      <tr>
+        <td>` + z + `</td>
+        <td>` + rec[S1].livecells[z] + `</td>
+        <td>` + round(fillin) + `%</td>
+        <td>` + rec[S1].nqfilld[z] + `</td>
+        <td>` + round(spread) + `%</td>
+        <td>` + rec[S1].nqchngd[z] + `</td>
+        <td>` + round(variat) + `%</td>
+        <td>` + rec[S1].icehsh[z] + `</td>
+        <td>` + flags + `</td>
+      </tr>
+    `;
+  }
+  sstat += `
+    <table cellspacing=0 id='glifeStatTB'>
+      <tr><th>z</th><th>livecells</th><th>fillin</th><th>nqfilld</th><th>spread</th><th>nqchngd</th><th>variat</th><th>icehsh</th><th>flags</th></tr>
+      ` + stb + `
+    </table>
+  `;
+  
+  // if no interesting planes left - restart
+  if((ruleset=='random' || rerun)
+       && (
+            (!interesting_z && nturn>500)
+            ||
+            (nturn>=5000)
+          )
+  ) {
+    SaveRules(failed_at);
+    nGen ++;
+    if(nGen>300 || rerun) {
+      window.location.reload(true);  // reloading page sometimes to refresh seed for rand32 to avoid cycles
+    }
+    else {
       Rules = RandomRules();
       Init();
     }
   }
   
-  if(sfps)   document.getElementById('stxtfps').innerHTML = sfps;
+  if(S1==1) { S1 = 0;  S0 = 1; } else { S1 = 1;  S0 = 0; }  // flipping time for Stats
+  
   if(sstat)  document.getElementById('stxtstat').innerHTML = sstat;
   if(sgenom) document.getElementById('stxtgenom').innerHTML = sgenom;
   
-  if(!paused) setTimeout(Stats, 1000);
 }
