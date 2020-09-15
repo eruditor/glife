@@ -1,24 +1,28 @@
 <? define("_root","../../");
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 include(_root."page.php");
 $page->type = "page";
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 $p = mysql_o("SELECT * FROM rr_pages WHERE typ='k' AND url='alife'");
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-$ver = 212;
+$ver = 213;
 
 $otitle = "GLife";
 $h1 = "";
 $zabst = "
-  Life game on WebGL2.
+  Life game on WebGL2.<br>
 ";
 $zzt = "";
 $zpubd = "2020-06-08";
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+$send2js = '';
+
+include_once("lib/service.php");
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 if(isset($_GET['savedcat']) || isset($_GET['typed']) || isset($_GET['named']) || isset($_GET['savedid'])) {
   if(isset($_GET['typed'])) {
     $typed = $_GET['typed'];
@@ -41,33 +45,57 @@ if(isset($_GET['savedcat']) || isset($_GET['typed']) || isset($_GET['named']) ||
     $Q = "id='$savedid'";
   }
   else {
-    $savedcat = $_GET['savedcat'];
+    $savedcat = SPCQA($_GET['savedcat']);
     $goodness = intval($_GET['goodness']);
     $stitle = "Category «".SPCQA($savedcat)."»";
-    $Q = "failed_at='".MRES($savedcat)."'" . ($goodness ? " AND failed_nturn>=".intval($nturn4goodness[$goodness]) : "");
+    if($_GET['ll']) $stitle = "<a href='$_self?savedcat=$savedcat".($goodness?"&goodness=$goodness":"")."'>$stitle</a>";
+    $Q = "failed_at='".MRES($savedcat)."'";
+        if($goodness==1) $Q .= " AND failed_nturn>=5000";
+    elseif($goodness==2) $Q .= " AND failed_nturn>=1000 AND failed_nturn<5000";
+    elseif($goodness==3) $Q .= " AND failed_nturn<1000";
   }
   
-  $page->title = "Alife: $otitle: Saved Genoms: $stitle – ERUDITOR.RU";
+  $PP = 100;  $LL = intval($_GET['ll']);  $LP = $LL * $PP;
+  
+  $page->title = "Alife: $otitle: Saved Genoms: ".strip_tags($stitle)." – ERUDITOR.RU";
   $h1 = "<a href='/k/?alife'>Alife</a> &rarr; <a href='/alife/glife/'>$otitle</a> &rarr; <a href='$_self?savedlist=1'>Saved Genoms</a> &rarr; $stitle";
   
   $s = '';
-  $nturn4goodness = [1=>5000, 2=>1000, 3=>0];
   $res = mysql_query(
-   "SELECT *
+   "SELECT SQL_CALC_FOUND_ROWS *
     FROM rr_glifes
     WHERE $Q
-    ORDER BY found_dt DESC
+    ORDER BY id DESC
+    LIMIT $LP,$PP
   ");
+  $shwn = mysql_num_rows($res);
+  $nttl = mysql_r("SELECT FOUND_ROWS()");
   while($r = mysql_fetch_object($res)) {
+    $s4records = [];
+    if($r->records) {
+      $records = json_decode($r->records);
+      foreach(['fillin','spread','variat'] as $k) {
+        if(!$records->$k) continue;
+        foreach($records->$k as $z=>$v) {
+          $v = round($v);
+          $bgc = gl_Bgc4Records($k, $v);
+          $t = $v>=100 ? "AA" : sprintf("%'.02d", $v);
+          $s4records[$k] .= "<span style='background:#$bgc;'>" . $t . "</span> ";
+        }
+      }
+    }
     $s .= "
       <tr>
         <td>$r->id</td>
         <td><a href='$_self?ruleset=$r->rules&maxfps=300'>$r->rules</a></td>
-        <td><i>$r->named</i></td>
+        <td><a href='$_self?ruleset=$r->named&maxfps=300'><i>$r->named</i></a></td>
         <td>$r->typed</td>
         <td>$r->found_dt</td>
         <td>$r->failed_at</td>
-        <td>$r->failed_nturn</td>
+        <td>$r->failed_nturn</td><td></td>
+        <td class=tar>{$s4records['fillin']}</td><td></td>
+        <td class=tar>{$s4records['spread']}</td><td></td>
+        <td class=tar>{$s4records['variat']}</td><td></td>
         ".(_local==="1" ? "
           <td>
             <input type=text id='glrule$r->id' value='".SPCQA($r->named . ($r->typed?":$r->typed":""))."' size=24><input type=button value=' Save ' onclick='XHRsave(`id=$r->id&named=`+encodeURIComponent(document.getElementById(`glrule$r->id`).value));'>
@@ -81,14 +109,29 @@ if(isset($_GET['savedcat']) || isset($_GET['typed']) || isset($_GET['named']) ||
       #SavedListTB TD, #SavedListTB TH {font:normal 11px/13px arial; padding:1px 3px; vertical-align:top;}
       #SavedListTB TH {text-align:left; font-weight:bold;}
       #SavedListTB TD INPUT {font:normal 11px/11px arial; padding:0;}
+      #SavedListTB TD.tar {text-align:right; font:normal 11px/11px Lucida Console, Monaco, Monospace;}
     </style>
     <table cellspacing=0 id='SavedListTB'>
-      <tr><th>id</th><th>genom</th><th>named</th><th>typed</th><th>datetime</th><th>category</th><th>nturn</th></tr>
+      <tr>
+        <th>id</th><th>genom</th><th>named</th><th>typed</th><th>datetime</th><th>category</th><th>nturn</th><th></th>
+        <th>fillin</th><th></th>
+        <th>spread</th><th></th>
+        <th>variat</th><th></th>
+      </tr>
       $s
     </table>
   ";
+  if($nttl>$PP) {  // pagination
+    $q = '';
+    foreach($_GET as $k=>$v) if($k<>'ll') $q .= ($q?"&":"") . "$k=$v";
+    $s = '';
+    $s .= "<td width=160>" . ($LL>0 ? "<a href='$_self?$q&ll=".($LL-1)."'>&larr; prev $PP</a>" : "") . "</td>";
+    $s .= "<td width=240>shown $shwn / $nttl</td>";
+    $s .= "<td width=160>" . ($LP+$shwn<$nttl ? "<a href='$_self?$q&ll=".($LL+1)."'>next $PP &rarr;</a>" : "") . "</td>";
+    $zzt .= "<br><div align=center><table><tr>$s</tr></table></div>";
+  }
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 elseif($_GET['savedlist']) {
   $stitle = "Saved Genoms: Category List";
   $page->title = "Alife: $otitle: $stitle – ERUDITOR.RU";
@@ -172,58 +215,91 @@ elseif($_GET['savedlist']) {
     </tr></table>
   ";
 }
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 else {
   $rand = intval($_GET['seed']) ?: rand(1,getrandmax());
   $ruleset = '';
   
+  ////////////////////////////////////////////////////////////////
   if($_GET['ruleset']) {
     $ruleset = $_GET['ruleset'];
-    $s = '';
-    if(strpos($ruleset, "[")!==false) $q = "rules='".MRES($ruleset)."'";
-    else $q = "named='".MRES($ruleset)."'";
+    
+    if(strpos($ruleset, "[")!==false) { $q = "rules='".MRES($ruleset)."'";  $isnamed = false; }
+    else                              { $q = "named='".MRES($ruleset)."'";  $isnamed = true; }
+    
     $gl = mysql_o("SELECT * FROM rr_glifes WHERE $q");
+    
+    $s = '';
     if($gl) {
-      $res = mysql_query("SELECT * FROM rr_gliferuns WHERE gl_id='$gl->id' LIMIT 5");
-      while($r = mysql_fetch_object($res)) {
-        $s .= "
-          <b>Run #$r->id</b><br>
-          ".($r->named ? "named = ".SPCQA($r->named)."<br>" : "")."
-          ".($r->typed ? "typed = ".SPCQA($r->typed)."<br>" : "")."
-          $r->failed_at / $r->failed_nturn<br>
-        ";
-        if($r->records) {
-          $json = json_decode($r->records) ?: [];
-          $st = $stb = $sth = '';
-          foreach($json as $k=>$v) {
-            //if($k=='icehsh') continue;
-            if(!in_array($k,['fillin','spread','variat'])) continue;
-            if(is_array($v)) {
-              $stb .= "<tr><td>" . SPCQA($k) . "</td>";
-              foreach($v as $kv=>$vv) {
-                $vv = round($vv) . "%";
-                $stb .= "<td>" . SPCQA($vv) . "</td>";
-                if($k=='fillin') $sth .= "<th>".SPCQA($kv)."</th>";
-              }
-              $stb .= "</tr>";
-            }
-            else {
-              $st .= SPCQA($k) . " = " . SPCQA($v) . "<br>";
-            }
+      $r = $gl;
+      $FD = count(explode("],[", $r->rules));
+      $s .= "
+        <b>GLife #$r->id ({$FD}D)</b><br>
+        ".($r->named ? "named = ".SPCQA($r->named)."<br>" : "")."
+        ".($r->typed ? "typed = ".SPCQA($r->typed)."<br>" : "")."
+        ".($gl->named && $isnamed ? "genom = ".SPCQA($gl->rules)."<br>" : "")."
+        ".($r->failed_at ?: "---")." / $r->failed_nturn<br>
+      ";
+      if($r->records) {
+        $json = json_decode($r->records) ?: [];
+        $stb = '';
+        for($z=0; $z<$FD; $z++) {
+          $t = '';
+          foreach(['fillin','spread','variat'] as $k) {
+            $v = round($json->$k[$z]);
+            $t .= "<td><span style='background:#".gl_Bgc4Records($k, $v).";'>$v%</span></td>";
           }
-          $s .= $st . "
-            <table cellspacing=0 id='glifeStatTB'>
-              <tr><th>z-layer</th>$sth</tr>
-              $stb
-            </table>
-          ";
+          $stb .= "<tr><td>$z</td>$t</tr>";
         }
-        $s .= "<br>";
+        $s .= "
+          <table cellspacing=0 id='glifeStatTB'>
+            <tr><th>z</th><th>fillin</th><th>spread</th><th>variat</th></tr>
+            $stb
+          </table>
+        ";
+      }
+      $nruns = mysql_r("SELECT COUNT(*) FROM rr_gliferuns WHERE gl_id='$gl->id'");
+      if($nruns>1) {
+        if($_GET['allruns']) $s .= "<div><a href='$_self?ruleset=$ruleset&maxfps=300&paused=1'>Hide all runs</a></div>";
+        else                 $s .= "<div><a href='$_self?ruleset=$ruleset&maxfps=300&paused=1&allruns=1'>Show last runs</a></div>";
+      }
+      $s .= "<br>";
+      
+      if($_GET['allruns']) {
+        $res = mysql_query("SELECT * FROM rr_gliferuns WHERE gl_id='$gl->id' ORDER BY id DESC LIMIT 5");
+        while($r = mysql_fetch_object($res)) {
+          $s .= "
+            <b>Run #$r->id</b><br>
+            ".($r->named ? "named = ".SPCQA($r->named)."<br>" : "")."
+            ".($r->typed ? "typed = ".SPCQA($r->typed)."<br>" : "")."
+            ".($r->failed_at ?: "---")." / $r->failed_nturn<br>
+          ";
+          if($r->records) {
+            $json = json_decode($r->records) ?: [];
+            $stb = '';
+            for($z=0; $z<$FD; $z++) {
+              $t = '';
+              foreach(['fillin','spread','variat'] as $k) {
+                $v = round($json->$k[$z]);
+                $t .= "<td><span style='background:#".gl_Bgc4Records($k, $v).";'>$v%</span></td>";
+              }
+              $stb .= "<tr><td>$z</td>$t</tr>";
+            }
+            $s .= "
+              <table cellspacing=0 id='glifeStatTB'>
+                <tr><th>z</th><th>fillin</th><th>spread</th><th>variat</th></tr>
+                $stb
+              </table>
+            ";
+          }
+          $s .= "<br>";
+        }
       }
       $zzt .= "<div class=stxt>$s</div>";
     }
     $stitle = SPCQA($ruleset);
   }
+  ////////////////////////////////////////////////////////////////
   elseif($_GET['rerun']) { // rerun old runs to calc gl.records field
     usleep(200000);
     $q = '';
@@ -245,12 +321,33 @@ else {
     if(!$ruleset) exit("rerun finished");
     $stitle = "Rerun = " . SPCQA($ruleset);
   }
+  ////////////////////////////////////////////////////////////////
+  
+  $send2js .= "gl_bgc4records = JSON.parse(`" . json_encode($gl_bgc4records) . "`);";
+  
+  $s = '';
+  $res = mysql_query("SELECT * FROM rr_glifes WHERE named<>''");
+  while($r = mysql_fetch_object($res)) {
+    $s .= "'$r->named': '$r->rules',\n";
+  }
+  $send2js .= "
+    NamedRules = {
+      'Debug':     '[[37:23,36:125],[37:23,36:125],[37:23,36:125],[37:23,36:125],]',
+      'Classic1D': '[[37:23,38:23,357:238,36:125,3:23,368:238,36:23,38:238,3:238],]',
+      'Vores':     '[[35678:5678],[347:235,,3568:2367],[,12:1,12:14,],]',
+      $s
+    }
+  ";
+  
+  ////////////////////////////////////////////////////////////////
   
   $page->title = "Alife: $otitle".($stitle ? ": ".$stitle : "")." – ERUDITOR.RU";
   
   $h1 = "<a href='/k/?alife'>Alife</a> &rarr; " . ($_GET ? "<a href='/alife/glife/'>$otitle</a>" : $otitle . " <span>v".sprintf("%.2lf", $ver/100)."</span>") . ($stitle ? " &rarr; ".$stitle : "");
   
-  $zabst .= "<br>&rarr; <a href='$_self?savedlist=1'>Database of Genoms found in random-search</a>";
+  $zabst .= "&rarr; <a href='$_self?savedlist=1'>Database of Genoms found in random-search</a><br>";
+  
+  ////////////////////////////////////////////////////////////////
   
   $zzt .= "
     <style>
@@ -272,6 +369,8 @@ else {
     <div id='statcanvas' class='stxt'></div>
     <div id='stxtgenom'  class='stxt'></div>
     <div id='stxtlog'    class='stxt'></div>
+    
+    <script>$send2js</script>
     
     <script src='lib/rules.js?v=$ver&r=$rand'></script>
     <script src='glife.js?v=$ver&r=$rand".($ruleset?"&ruleset=".urlencode($ruleset):"")."'></script>
@@ -303,7 +402,7 @@ $page->z .= "
   <div class=zpubd>$zpubd</div>
 ";
 
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 MakePage();
 

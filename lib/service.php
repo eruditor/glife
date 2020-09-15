@@ -1,9 +1,51 @@
 <?
 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+global $gl_bgc4records;
+$gl_bgc4records = [
+  'fillin' => [
+      2 => "faa",
+      5 => "fda",
+     10 => "ff8",
+     30 => "afa",
+    999 => "ccc",
+  ],
+  'spread' => [
+      5 => "faa",
+     10 => "fda",
+     30 => "ff8",
+     60 => "afa",
+     80 => "8ff",
+    100 => "eee",
+    999 => "ccc",
+  ],
+  'variat' => [
+    1 => "ccc",
+    5 => "faa",
+    10 => "fda",
+    50 => "ff8",
+    100 => "afa",
+    999 => "8ff",
+  ],
+];
+
+function gl_Bgc4Records($k, $v) {
+  global $gl_bgc4records;
+  $bgc = '';
+  foreach($gl_bgc4records[$k] as $x=>$c) {
+    $bgc = $c;
+    if($v<$x) break;
+  }
+  return $bgc;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 function gl_AvgRuns($gl, $inx=false) {
   $gls = [];
   
-  $res = mysql_query("SELECT * FROM rr_gliferuns WHERE gl_id='$gl->id'");
+  $res = mysql_query("SELECT * FROM rr_gliferuns WHERE gl_id='$gl->id' AND failed_at!='x'");
   while($r = mysql_fetch_object($res)) {
     $gl_id = $r->gl_id;
     $gls[$gl_id]->failed_at[$r->failed_at] ++;
@@ -54,5 +96,7 @@ function gl_AvgRuns($gl, $inx=false) {
   
   return $gls;
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 ?>

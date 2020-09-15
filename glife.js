@@ -7,22 +7,29 @@ var scripts = document.getElementsByTagName('script');
 var myScript = scripts[scripts.length - 1];
 const selfParams = new URLSearchParams(myScript.src);
 
-debug = urlParams.get('debug') ? 1 : 0;
-paused = urlParams.get('paused') ? 1 : 0;
-pausestat = urlParams.get('pausestat') ? 1 : 0;
-maxfps = intval(urlParams.get('maxfps'));  // Calc framerate limit
-showiter = intval(urlParams.get('showiter'));  if(showiter<2) showiter = 0;  // Show once per showiter Calcs
-FW = 600;  if(urlParams.get('FW')>0) FW = intval(urlParams.get('FW'));
-FH = 350;  if(urlParams.get('FH')>0) FH = intval(urlParams.get('FH'));
-FD =   3;  if(urlParams.get('FD')>0) FD = intval(urlParams.get('FD'));
-ruleset = urlParams.get('ruleset') || selfParams.get('ruleset');
-rerun = urlParams.get('rerun') || selfParams.get('rerun');
-seed = intval(urlParams.get('seed') || selfParams.get('r'));
-LW = 1.0;  if(urlParams.get('LW')>0) LW = parseFloat(urlParams.get('LW'));  // initially filled piece width
-LH = 0.8;  if(urlParams.get('LH')>0) LH = parseFloat(urlParams.get('LH'));  // initially filled piece height
+class Cfg {
+  constructor(url, slf) {
+    this.debug = url.get('debug') ? 1 : 0;
+    this.paused = url.get('paused') ? 1 : 0;
+    this.pausestat = url.get('pausestat')>0 ? 1 : 0;
+    this.maxfps = intval(url.get('maxfps'));  // Calc framerate limit
+    this.showiter = intval(url.get('showiter'));  if(this.showiter<2) this.showiter = 0;  // Show once per showiter Calcs
+    this.rerun = url.get('rerun') || slf.get('rerun');
+  }
+}
+var cfg = new Cfg(urlParams, selfParams);
 
-if(debug) {
-  paused = 1;  maxfps = 1;
+// global vars for constant things, good for shorter names in formulas
+var FW = 600;  if(urlParams.get('FW')>0) FW = intval(urlParams.get('FW'));
+var FH = 350;  if(urlParams.get('FH')>0) FH = intval(urlParams.get('FH'));
+var FD =   3;  if(urlParams.get('FD')>0) FD = intval(urlParams.get('FD'));
+var LW = 1.0;  if(urlParams.get('LW')>0) LW = parseFloat(urlParams.get('LW'));  // initially filled piece width
+var LH = 0.8;  if(urlParams.get('LH')>0) LH = parseFloat(urlParams.get('LH'));  // initially filled piece height
+var ruleset = urlParams.get('ruleset') || selfParams.get('ruleset');
+var seed = intval(urlParams.get('seed') || selfParams.get('r'));
+
+if(cfg.debug) {
+  cfg.paused = 1;  cfg.maxfps = 1;
   FW = 10;  FH = 5;
   ruleset = 'Debug';
 }
@@ -52,7 +59,7 @@ function mulberry32(a) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   }
 }
-rand32 = mulberry32(seed);
+var rand32 = mulberry32(seed);
 function rnd(a, b) { return Math.floor(rand32()*(b-a)) + a; }  // rand32() <-> Math.random()
 
 // GLSL SHADERS ////////////////////////////////////////////////////////////////
@@ -130,9 +137,9 @@ function Color4Bits(bits) {
     surv[i] = Gene4Bit(bits.isurv, i);
   }
   var ret = {'r':0, 'g':0, 'b':0};
-  ret.r = (born[2] + born[3] + born[7]) / 2. + (surv[0] + surv[3]) / 3.;
-  ret.g = (born[4] + born[6]) / 2. + (surv[1] + surv[5] + surv[7]) / 3.;
-  ret.b = (born[5] + born[5]) / 2. + (surv[2] + surv[4] + surv[6]) / 3.;
+  ret.r = (born[2] + born[3] + born[7]) / 2. + (surv[0] + surv[3]          ) / 3.;
+  ret.g = (born[1] + born[4] + born[6]) / 2. + (surv[1] + surv[5] + surv[7]) / 3.;
+  ret.b = (born[0] + born[5] + born[5]) / 2. + (surv[2] + surv[4] + surv[6]) / 3.;
   var l = Math.sqrt(ret.r*ret.r + ret.g*ret.g + ret.b*ret.b);
   if(l>0) {
     ret.r *= 200 / l;
@@ -140,7 +147,7 @@ function Color4Bits(bits) {
     ret.b *= 200 / l;
   }
   return ret;
-}
+} //console.log(Color4Bits(Bits4Genom(Genom4Idx('001000000:000001100'))));  throw new Error("Stopped!");
 
 var fs_Color4Cell = `
   vec4 Color4Cell(uvec4 cell) {
@@ -152,7 +159,7 @@ var fs_Color4Cell = `
     }
     vec4 ret;
     ret.r = (born[2] + born[3] + born[7]) / 2. + (surv[0] + surv[3]) / 3.;
-    ret.g = (born[4] + born[6]) / 2. + (surv[1] + surv[5] + surv[7]) / 3.;
+    ret.g = (born[1] + born[4] + born[6]) / 2. + (surv[1] + surv[5] + surv[7]) / 3.;
     ret.b = (born[5] + born[5]) / 2. + (surv[2] + surv[4] + surv[6]) / 3.;
     float l = sqrt(ret.r*ret.r + ret.g*ret.g + ret.b*ret.b);
     if(l>0.) {
@@ -218,6 +225,23 @@ var CalcFragmentShaderSource = `
       
       tex3coord = ivec3(v_texcoord, layer);
       
+      /*
+      // static environs
+      if(tex3coord.x==1) {
+        colors[layer] = tex3coord.y%2==1 ? uvec4(100,100,100,255) : uvec4(0);
+        continue;
+      }
+      if(tex3coord.y==1) {
+        colors[layer] = tex3coord.x%2==1 ? uvec4(100,100,100,255) : uvec4(0);
+        continue;
+      }
+      if(tex3coord.x>`+round(0.4*FW)+` && tex3coord.x<`+round(0.6*FW)+`
+      && tex3coord.y>`+round(0.4*FH)+` && tex3coord.y<`+round(0.6*FH)+`) {
+        colors[layer] = tex3coord.x%2==1 && tex3coord.y%2==1 ? uvec4(100,100,100,255) : uvec4(0);
+        continue;
+      }
+      */
+      
       uvec4 cells[9];
       // for xy-plane - Moore neighborhood
       cells[0] = GetCell( 0,  0,  0);
@@ -237,7 +261,7 @@ var CalcFragmentShaderSource = `
         if(IsAlive(cells[n])) neibcount++;
       }
       
-      // for z-axis (layers) - hard-coded von Neumann neighborhood below
+      // for z-axis (layers) - hard-coded von Neumann neighborhood calc'ed below
       
       uvec4 color;
       color = curcell;  // by default cell stays the same as in previous turn
@@ -246,7 +270,10 @@ var CalcFragmentShaderSource = `
         if(IsAlive(curcell)) color.a = diealpha;  // die
       }
       else if(IsAlive(curcell)) {  // alive cell - will it survive?
-        if(layer<`+(FD-1)+` && IsAlive(GetCell(0, 0, 1))) {
+        if(false && `+FD+`>2 && layer==0 && IsAlive(GetCell(0, 0, `+(FD-1)+`))) {
+          // grass survives, protected and fed by top-level carnivore
+        }
+        else if(layer<`+(FD-1)+` && IsAlive(GetCell(0, 0, 1))) {
           color.a = diealpha;  // die, eaten by carnivore
         }
         else {
@@ -348,6 +375,55 @@ var ShowFragmentShaderSource = `
   }
 `;
 
+var MousFragmentShaderSource = `
+  #version 300 es
+  precision mediump float;
+  precision highp int;
+  
+  uniform highp usampler3D u_fieldtexture;  // Field texture, UInt32
+  uniform ivec3 u_mouse;  // mouse coords (x,y,z)
+  uniform uvec4 u_rgba;  // color to paint with
+  
+  in vec2 v_texcoord;  // the texCoords passed in from the vertex shader
+  
+  out uvec4 glFragColor[`+FD+`];
+  
+  ivec3 tex3coord;
+  ivec3 fieldSize;
+  
+  uvec4 GetCell() {
+    return texelFetch(u_fieldtexture, tex3coord, 0);
+  }
+  
+  ` + fs_Bit4Gene + `
+  
+  ` + fs_Gene4Bit + `
+  
+  void main() {
+    fieldSize = textureSize(u_fieldtexture, 0);
+    
+    uvec4 colors[`+FD+`];
+    
+    for(int layer=0; layer<`+FD+`; layer++) {
+      
+      tex3coord = ivec3(v_texcoord, layer);
+      
+      uvec4 color = GetCell();
+      
+      if(tex3coord==u_mouse) {
+        color = u_rgba;
+      }
+      
+      colors[layer] = color;
+    }
+    
+    glFragColor[0] = colors[0];
+    ` + (FD>1 ? `glFragColor[1] = colors[1];` : ``) + `
+    ` + (FD>2 ? `glFragColor[2] = colors[2];` : ``) + `
+    ` + (FD>3 ? `glFragColor[3] = colors[3];` : ``) + `
+  }
+`;
+
 // RULES (GENES) ////////////////////////////////////////////////////////////////
 
 // each Rule ('3:23') encodes two DNA Strands of Born and Surv rules
@@ -358,7 +434,7 @@ var ShowFragmentShaderSource = `
 // 1. Skip bits 0 and 1 for born to keep bit 0 for surv (encoding-decoding logic will become more complicated)
 // 2. Use blue and alpha channels to add one more bit to every gene - Float5 precision instead of Float4 (loosing color decay info in alpha-channel)
 
-Rules = GetRuleset(ruleset);
+var Rules = GetRuleset(ruleset);
 
 function Strand4Rule(r) {
   var strand = [0, 0, 0, 0, 0, 0, 0, 0, 0];
@@ -457,7 +533,7 @@ function Idx4Idx5(idx5) {
 
 // SPACE (FIELD) ////////////////////////////////////////////////////////////////
 
-F = new Uint32Array(4 * FW * FH * FD);  //Float32Array  //Uint8Array
+var F = new Uint32Array(4 * FW * FH * FD);  //Float32Array  //Uint8Array
 
 function SetCell(x, y, z, r, g, b, a) {
   if(x<0 || y<0 || z<0 || x>FW || y>FH || z>FD) return;
@@ -476,7 +552,7 @@ function GetCell(x, y, z) {
 
 // TIME (ITERATIONS) ////////////////////////////////////////////////////////////////
 
-T0 = 0;  T1 = 1;  // previous (0) and current (1) moments
+var T0 = 0, T1 = 1;  // previous (0) and current (1) moments
 
 function FlipTime() {
   if(T1==1) { T1 = 0;  T0 = 1; } else { T1 = 1;  T0 = 0; } // switching between previous and current moment fields
@@ -486,14 +562,14 @@ function FlipTime() {
 
 function InitSetCell(x, y, z, r) {
   if(!Rules[z][r]) return;
-  var bitrules = Bits4Genom(Genom4Rule(Rules[z][r]));  //Bits4Genom(Genom4Idx('00010fhf0:0h1f0h00f'))
+  var bitrules = Bits4Genom(Genom4Rule(Rules[z][r]));
   SetCell(x, y, z, bitrules.iborn, bitrules.isurv, 0, 255);
 }
 
 function InitialFill() {
   F.fill(0);  // zeroing F in case this call is to restart everything
   
-  if(debug) {
+  if(cfg.debug) {
     if(1) {
       InitSetCell(1, 2, 0, 0);
       InitSetCell(2, 2, 0, 0);
@@ -510,6 +586,7 @@ function InitialFill() {
   for(var z=0; z<FD; z++) {
     for(var x=round(FW/2-FW*LW/2); x<round(FW/2+FW*LW/2); x++) {
       for(var y=round(FH/2-FH*LH/2); y<round(FH/2+FH*LH/2); y++) {
+        if(y<0 || y>=FH) continue;
         if(z>=2 && y<FH/2) continue; // not too much predators
         var density = round((1 - Math.abs(2*y/FH-1)/LH)*10);
         if(rnd(0,10)<density) {
@@ -520,30 +597,16 @@ function InitialFill() {
     }
   }
   
-  if(debug) console.log(F);
-}
-
-// INTERFACE ////////////////////////////////////////////////////////////////
-
-function Pause() {
-  var btn = document.getElementById('pausebtn');
-  if(paused) { paused = 0;  btn.value = 'pause';  Start(); }
-  else       { paused = 1;  btn.value = 'unpause'; }
-}
-
-function PauseStat() {
-  var btn = document.getElementById('pausestatbtn');
-  if(pausestat) { pausestat = 0;  btn.value = 'pause stats';   }
-  else          { pausestat = 1;  btn.value = 'unpause stats'; }
+  if(cfg.debug) console.log(F);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // INIT SHADERS ////////////////////////////////////////////////////////////////
 
-canvas = document.querySelector("#cnv");
+var canvas = document.querySelector("#cnv");
 
-gl = canvas.getContext("webgl2");  //, {premultipliedAlpha:false}  //"experimental-webgl"
+var gl = canvas.getContext("webgl2");  //, {premultipliedAlpha:false}  //"experimental-webgl"
 if(!gl) alert('Enable WebGL2 in your browser');
 
 function createShader(gl, type, source) {
@@ -560,9 +623,10 @@ function createShader(gl, type, source) {
   }
 }
 
-var LifeVertexShader   = createShader(gl, gl.VERTEX_SHADER,   LifeVertexShaderSource.trim());  // same for both Calc and Show
+var LifeVertexShader   = createShader(gl, gl.VERTEX_SHADER,   LifeVertexShaderSource.trim());  // same for all fragment shaders
 var CalcFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, CalcFragmentShaderSource.trim());
 var ShowFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, ShowFragmentShaderSource.trim());
+var MousFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, MousFragmentShaderSource.trim());
 
 function createProgram(gl, vertexShader, fragmentShader) {
   var program = gl.createProgram();
@@ -581,6 +645,7 @@ function createProgram(gl, vertexShader, fragmentShader) {
 
 var CalcProgram = createProgram(gl, LifeVertexShader, CalcFragmentShader);
 var ShowProgram = createProgram(gl, LifeVertexShader, ShowFragmentShader);
+var MousProgram = createProgram(gl, LifeVertexShader, MousFragmentShader);
 
 // LINKING DATA ////////////////////////////////////////////////////////////////
 
@@ -595,13 +660,18 @@ ShowProgram.location.a_position     = gl.getAttribLocation( ShowProgram, "a_posi
 ShowProgram.location.u_fieldtexture = gl.getUniformLocation(ShowProgram, "u_fieldtexture");
 ShowProgram.location.u_canvas       = gl.getUniformLocation(ShowProgram, "u_canvas");
 ShowProgram.location.u_surface      = gl.getUniformLocation(ShowProgram, "u_surface");
+MousProgram.location = {};
+MousProgram.location.a_position     = gl.getAttribLocation( MousProgram, "a_position");
+MousProgram.location.u_fieldtexture = gl.getUniformLocation(MousProgram, "u_fieldtexture");
+MousProgram.location.u_mouse        = gl.getUniformLocation(MousProgram, "u_mouse");
+MousProgram.location.u_rgba         = gl.getUniformLocation(MousProgram, "u_rgba");
 
 // CANVAS SIZE ////////////////////////////////////////////////////////////////
 
 //if(document.body.clientWidth < document.body.clientHeight) [FW, FH] = [FH, FW];
 var zoomx = Math.floor(0.9 * document.body.clientWidth  / FW);  if(zoomx<1) zoomx = 1;
 var zoomy = Math.floor(0.9 * document.body.clientHeight / FH);  if(zoomy<1) zoomy = 1;
-zoom = Math.min(zoomx, zoomy);
+var zoom = Math.min(zoomx, zoomy);
 if(FD>1 && zoom<2) zoom = 2;  // for displaying 3D case we need at least 2*2 pixels for each cell
 
 canvas.width  = zoom * FW;  canvas.style.width  = canvas.width  + 'px';
@@ -617,9 +687,9 @@ function resizeCanvasToDisplaySize(canvas) {
 }
 
 // stats canvas
-scnv_height = 100;
-scnvs = sctxs = [];
-sdiv = document.getElementById('statcanvas');
+var scnv_height = 100;
+var scnvs = [], sctxs = [];
+var sdiv = document.getElementById('statcanvas');
 sdiv.innerHTML = 'species population (log scale):<br>';
 for(var z=0; z<FD; z++) {
   scnvs[z] = document.createElement('canvas');
@@ -637,12 +707,24 @@ class Surface {
     this.top = 0;
   }
 }
-surface = new Surface();
+var surface = new Surface();
 
 // HTML TOP FORM ////////////////////////////////////////////////////////////////
 
-topbar  = document.getElementById('topbar');
-topform = document.getElementById('topform');
+function Pause(set=0) {
+  var btn = document.getElementById('pausebtn');
+  if(set==-1 || cfg.paused && set!=1) { cfg.paused = 0;  btn.value = 'pause';  Start(); }
+  else                                { cfg.paused = 1;  btn.value = 'unpause'; }
+}
+
+function PauseStat() {
+  var btn = document.getElementById('pausestatbtn');
+  if(cfg.pausestat) { cfg.pausestat = 0;  btn.value = 'pause stats';   }
+  else              { cfg.pausestat = 1;  btn.value = 'unpause stats'; }
+}
+
+var topbar  = document.getElementById('topbar');
+var topform = document.getElementById('topform');
 
 function CreateTopForm() {
   var ret = '', sp = ' &nbsp; ';
@@ -656,23 +738,25 @@ function CreateTopForm() {
   
   ret += '<span title="Field Height">FH=</span><input type=text name="FH" value="' + FH + '" size=4>' + sp;
   
-  var s = '';  for(var t in {'':[], 'random':[], ...NamedRules}) s += '<option value="' + t + '" ' + (t==ruleset?'selected':'') + '>' + t;
-  var onchange = `if(this.value!='random') document.getElementById('FDsel').value = NamedRules[this.value].length`;
+  var rule0 = [];  if(ruleset.indexOf(',')>-1) rule0[ruleset] = ruleset;  else rule0[''] = '';
+  var s = '';  for(var t in {...rule0, 'random':'', ...NamedRules}) s += '<option value="' + t + '" ' + (t==ruleset?'selected':'') + '>' + t;
+  var onchange = `if(this.value!='random') document.getElementById('FDsel').value = GetRuleset(NamedRules[this.value]).length`;
   ret += '<span title="NamedRules">Genom=</span><select name="ruleset" onchange="' + onchange + '">' + s + '</select>' + sp;
   
-  ret += '<span title="">seed=</span><input type=text name="seed" value="' + seed + '" size=10>' + sp;
+  ret += '<span title="PRNG seed">seed=</span><input type=text name="seed" value="' + seed + '" size=10>' + sp;
   
   ret += '<br>';
   
-  ret += '<span title="initially filled piece width">LW=</span><input type=text name="LW" value="' + LW + '" size=3>' + sp;
+  ret += '<span title="Width of initially filled area">LW=</span><input type=text name="LW" value="' + LW + '" size=3>' + sp;
   
-  ret += '<span title="initially filled piece height">LH=</span><input type=text name="LH" value="' + LH + '" size=3>' + sp;
+  ret += '<span title="Height of initially filled area">LH=</span><input type=text name="LH" value="' + LH + '" size=3>' + sp;
   
-  ret += '<span title="0 = requestAnimationFrame, 1000 = no setTimeout">maxfps=</span><input type=text name="maxfps" value="' + maxfps + '" size=4>' + sp;
+  ret += '<span title="0 = requestAnimationFrame, 1000 = no setTimeout">maxfps=</span>';
+  ret += '<input type=number name="maxfps" value="' + cfg.maxfps + '" min=0 max=300 style="width:4em;" onchange="cfg.maxfps=this.value; Show();">' + sp;
   
-  ret += '<span title="Show once per showiter Calcs">showiter=</span><input type=text name="showiter" value="' + showiter + '" size=3>' + sp;
+  ret += '<span title="Show once per showiter Calcs">showiter=</span><input type=text name="showiter" value="' + cfg.showiter + '" size=3>' + sp;
   
-  ret += '<span title="paused at start">paused=</span><input type=checkbox name="paused" ' + (paused ? 'checked' : '') + '>' + sp;
+  ret += '<span title="paused at start">paused=</span><input type=checkbox name="paused" ' + (cfg.paused ? 'checked' : '') + '>' + sp;
   
   return ret;
 }
@@ -682,18 +766,18 @@ function CreateNavButtons() {
   var ret = '';
   
   ret += `
-    <input type=button id='pausebtn' value='` + (paused ? `unpause` : `pause`) + `' onclick='Pause();' autofocus>
-    <input type=button id='pausestatbtn' value='` + (pausestat ? `unpause stats` : `pause stats`) + `' onclick='PauseStat();'>
+    <input type=button id='pausebtn' value='` + (cfg.paused ? `unpause` : `pause`) + `' onclick='Pause();' autofocus>
+    <input type=button id='pausestatbtn' value='` + (cfg.pausestat ? `unpause stats` : `pause stats`) + `' onclick='PauseStat();'>
   `;
   ret += '<br>';
   ret += `
     <input type=button value="&minus;" onclick="surface.left+=0.1*(FW/surface.zoom/2); surface.top +=0.1*(FH/surface.zoom/2); surface.zoom/=1.1; Show();">
     <input type=button value="+"       onclick="surface.zoom*=1.1; surface.left-=0.1*(FW/surface.zoom/2); surface.top -=0.1*(FH/surface.zoom/2); Show();">
     
-    <input type=button value="&larr;" onclick="surface.left-=10; Show();">
-    <input type=button value="&rarr;" onclick="surface.left+=10; Show();">
-    <input type=button value="&uarr;" onclick="surface.top +=10; Show();">
-    <input type=button value="&darr;" onclick="surface.top -=10; Show();">
+    <input type=button value="&larr;" onclick="surface.left+=10; Show();">
+    <input type=button value="&rarr;" onclick="surface.left-=10; Show();">
+    <input type=button value="&uarr;" onclick="surface.top -=10; Show();">
+    <input type=button value="&darr;" onclick="surface.top +=10; Show();">
     
     <input type=button value="&empty;" onclick="surface.left=0; surface.top=0; surface.zoom=1; Show();">
   `;
@@ -701,6 +785,52 @@ function CreateNavButtons() {
   return ret;
 }
 topbar.innerHTML += CreateNavButtons();
+
+// MOUSE ////////////////////////////////////////////////////////////////
+
+var mouseX = 0, mouseY = 0, mouseZ = 0, mouseRGBA = {};
+
+gl.canvas.onmousemove = function(e) {
+  mouseX = floor((e.offsetX / surface.zoom) / zoom - surface.left);
+  mouseY = floor(((gl.canvas.height - e.offsetY) / surface.zoom) / zoom - surface.top);
+};
+
+gl.canvas.onmousedown = function(e) {
+  Pause(1);
+  if(e.which===1) {  // left click
+    console.log(mouseX+':'+mouseY);
+    Mous();
+    gl.canvas.addEventListener('mousemove', Mous);
+  }
+  else if(e.which===3) {  // right click
+    gl.bindFramebuffer(gl.FRAMEBUFFER, Framebuffers[T0]);
+    for(var z=0; z<FD; z++) {
+      gl.readBuffer(gl.COLOR_ATTACHMENT0 + z);
+      gl.readPixels(0, 0, FW, FH, gldata_Format, gldata_Type, F);
+      var cell = GetCell(mouseX, mouseY, 0);
+      if(cell.a<255) {
+        continue;
+      }
+      else {
+        mouseRGBA = {...cell};
+        mouseZ = z;
+        console.log('z='+mouseZ+', rgba=');  console.log(mouseRGBA);
+        break;
+      }
+    }
+  }
+};
+
+gl.canvas.onmouseup = function(e) {
+  if(e.which===1) {
+    gl.canvas.removeEventListener('mousemove', Mous);
+  }
+  Pause(-1);
+};
+
+gl.canvas.oncontextmenu = function() {
+  return false;
+};
 
 // VERTICES ////////////////////////////////////////////////////////////////
 
@@ -731,9 +861,9 @@ gl.bufferData(gl.ARRAY_BUFFER,
 
 // we need to store 32bit (not default 8bit) in each color channel - Float32 or Int32
 
-gldata_InternalFormat = gl.RGBA32UI;  //RGBA32F  //RGBA
-gldata_Format = gl.RGBA_INTEGER;      //RGBA     //RGBA
-gldata_Type = gl.UNSIGNED_INT;        //FLOAT    //UNSIGNED_BYTE
+var gldata_InternalFormat = gl.RGBA32UI;  //RGBA32F  //RGBA
+var gldata_Format = gl.RGBA_INTEGER;      //RGBA     //RGBA
+var gldata_Type = gl.UNSIGNED_INT;        //FLOAT    //UNSIGNED_BYTE
 
 function CreateTexture(width, height, depth=1) {
   var texture = gl.createTexture();
@@ -764,17 +894,17 @@ function CreateFramebuffer(texture) {
   return framebuffer;
 }
 
-Textures = new Array(2);
+var Textures = new Array(2);
 Textures[0] = CreateTexture(FW, FH, FD);
 Textures[1] = CreateTexture(FW, FH, FD);
 
-Framebuffers = new Array(2);
+var Framebuffers = new Array(2);
 Framebuffers[0] = CreateFramebuffer(Textures[0]);
 Framebuffers[1] = CreateFramebuffer(Textures[1]);
 
 // MAIN ////////////////////////////////////////////////////////////////
 
-nGen = 1;  // number of genoms generated in random-search
+var nGen = 1;  // number of genoms produced in random-search
 
 class Record {
   constructor() {
@@ -820,6 +950,20 @@ class Records {  // tracking and writing to DB population characteristics
   absdelta(field, z) {
     return Math.abs(this.delta(field, z));
   }
+  
+  Bgc(k, v) {
+    var bgc = '';
+    for(let x in gl_bgc4records[k]) {
+      bgc = gl_bgc4records[k][x];
+      if(v<x) break;
+    }
+    return bgc;
+  }
+  
+  SpanBgc(k, v) {
+    v = round(v);
+    return `<span style='background:#` + this.Bgc(k, v) + `'>` + v + `</span>%`;
+  }
 }
 
 function Init() {
@@ -858,7 +1002,7 @@ function Start() {
 Start();
 
 function Calc() {
-  if(paused) return 0;
+  if(cfg.paused) return 0;
   
   gl.useProgram(CalcProgram);
   
@@ -882,15 +1026,15 @@ function Calc() {
   
   nturn ++;
   
-  if(showiter) { if(nturn % showiter == 0) Show(); }
-  else if(maxfps<=60) Show();
+  if(cfg.showiter) { if(nturn % cfg.showiter == 0) Show(); }
+  else if(cfg.maxfps<=60) Show();
   // else Show() rotates in its own cycle
 
   if((nturn % 200)==0) Stats();
   
-  if(maxfps>=1000) Calc();
-  else if(maxfps)  setTimeout(Calc, 1000 / maxfps);
-  else             requestAnimationFrame(Calc);
+  if(cfg.maxfps>=1000) Calc();
+  else if(cfg.maxfps && cfg.maxfps!=60) setTimeout(Calc, 1000 / cfg.maxfps);
+  else requestAnimationFrame(Calc);
 }
 
 function Show() {
@@ -916,7 +1060,33 @@ function Show() {
   
   nshow ++;
   
-  if(maxfps>60 && !showiter) requestAnimationFrame(Show);  // overwise Show() is called in Calc()
+  if(cfg.maxfps>60 && !cfg.showiter) requestAnimationFrame(Show);  // overwise Show() is called in Calc()
+}
+
+function Mous() {
+  gl.useProgram(MousProgram);
+  
+  gl.bindFramebuffer(gl.FRAMEBUFFER, Framebuffers[T1]);
+  
+  var color_attachments = [];
+  for(let layer=0; layer<FD; layer++) {
+    color_attachments[layer] = gl.COLOR_ATTACHMENT0 + layer;
+  }
+  gl.drawBuffers(color_attachments);
+  
+  gl.viewport(0, 0, FW, FH);
+  
+  gl.activeTexture(gl.TEXTURE0 + T0);
+  gl.bindTexture(gl.TEXTURE_3D, Textures[T0]);
+  gl.uniform1i(MousProgram.location.u_fieldtexture, T0);
+  gl.uniform3i(MousProgram.location.u_mouse, mouseX, mouseY, mouseZ);
+  gl.uniform4ui(MousProgram.location.u_rgba, mouseRGBA.r, mouseRGBA.g, mouseRGBA.b, mouseRGBA.a);
+  
+  gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+
+  FlipTime();
+  
+  Show();
 }
 
 function SaveRules(failed_at='') {
@@ -965,7 +1135,7 @@ function Stats(force=false) {
   
   if(sfps) document.getElementById('stxtfps').innerHTML = sfps;
   
-  if(!force && (paused || pausestat)) return;
+  if(!force && (cfg.paused || cfg.pausestat)) return;
   
   // calc stats and genom list
   
@@ -1051,6 +1221,7 @@ function Stats(force=false) {
   for(zidx in tracked) {
     z = zidx.substring(0, 1);  idx = zidx.substring(3);
     tracked[zidx] = specstat[z][idx] ? specstat[z][idx] : 0;
+    if(!tracked[zidx]) delete tracked[zidx];
   }
   for(zidx5 in tracked5) {
     z = zidx5.substring(0, 1);  idx5 = zidx5.substring(3);
@@ -1080,7 +1251,7 @@ function Stats(force=false) {
       var clr = Color4Bits(Bits4Genom(Genom4Idx(Idx4Idx5(idx5))));
       
       var xx = infostep;
-      var yy = scnv_height - round(Math.log2(tracked5[zidx5]) / Math.log2(FW*FH) * scnv_height); // Math.log2 or cbrt here
+      var yy = tracked5[zidx5] ? scnv_height - round(Math.log2(tracked5[zidx5]) / Math.log2(FW*FH) * scnv_height) : scnv_height; // Math.log2 or cbrt here
       var style = 'rgb('+clr.r+','+clr.g+','+clr.b+')';
       if(prevpoints[zidx5] && xx>0) {
         sctxs[z].beginPath();
@@ -1097,6 +1268,9 @@ function Stats(force=false) {
       prevpoints[zidx5] = yy;
     }
   }
+  
+  // removing extinct tracked5 (here, not above in update-cycle, to show extinction points on graphs)
+  for(zidx5 in tracked5) if(!tracked5[zidx5]) { delete tracked5[zidx5];  delete prevpoints[zidx5]; }
   
   // for how long planes are frozen
   for(z=0; z<FD; z++) {
@@ -1139,11 +1313,11 @@ function Stats(force=false) {
       <tr>
         <td>` + z + `</td>
         <td>` + rec[S1].livecells[z] + `</td>
-        <td>` + round(fillin) + `%</td>
         <td>` + rec[S1].nqfilld[z] + `</td>
-        <td>` + round(spread) + `%</td>
         <td>` + rec[S1].nqchngd[z] + `</td>
-        <td>` + round(variat) + `%</td>
+        <td>` + rec.SpanBgc('fillin', fillin) + `</td>
+        <td>` + rec.SpanBgc('spread', spread) + `</td>
+        <td>` + rec.SpanBgc('variat', variat) + `</td>
         <td>` + rec[S1].icehsh[z] + `</td>
         <td>` + flags + `</td>
       </tr>
@@ -1151,28 +1325,30 @@ function Stats(force=false) {
   }
   sstat += `
     <table cellspacing=0 id='glifeStatTB'>
-      <tr><th>z</th><th>livecells</th><th>fillin</th><th>nqfilld</th><th>spread</th><th>nqchngd</th><th>variat</th><th>icehsh</th><th>flags</th></tr>
+      <tr>
+        <th>z</th><th>livecells</th><th>nqfilld</th><th>nqchngd</th>
+        <th>fillin</th><th>spread</th><th>variat</th>
+        <th>icehsh</th><th>flags</th>
+      </tr>
       ` + stb + `
     </table>
   `;
   
-  // if no interesting planes left - restart
-  if((ruleset=='random' || rerun)
-       && (
-            (!interesting_z && nturn>500)
-            ||
-            (nturn>=5000)
-          )
-  ) {
-    SaveRules(failed_at);
-    nGen ++;
-    if(nGen>300 || rerun) {
-      window.location.reload(true);  // reloading page sometimes to refresh seed for rand32 to avoid cycles
+  if(ruleset=='random' || cfg.rerun) {
+    if((!interesting_z && nturn>500) || (nturn>=5000)) {  // if no interesting planes left - restart
+      SaveRules(failed_at);
+      nGen ++;
+      if(nGen>300 || cfg.rerun) {
+        window.location.reload(true);  // reloading page sometimes to refresh seed for rand32 to avoid cycles
+      }
+      else {
+        Rules = RandomRules();
+        Init();
+      }
     }
-    else {
-      Rules = RandomRules();
-      Init();
-    }
+  }
+  else if(nturn>=10000 && !saved) {  // saving all long-runned cases
+    SaveRules('x');
   }
   
   if(S1==1) { S1 = 0;  S0 = 1; } else { S1 = 1;  S0 = 0; }  // flipping time for Stats
